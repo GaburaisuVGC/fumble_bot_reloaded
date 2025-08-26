@@ -11,6 +11,7 @@ export async function execute(interaction) {
         .setDescription('Fumble Bot is a Discord bot designed to manage and facilitate competitive tournaments, track player statistics, and enhance the gaming experience for communities. Here are some of the main commands you can use:')
         .addFields(
             { name: '/init', value: 'Initializes your user profile in the bot\'s database. You need to do this before participating in tournaments.' },
+            { name: '/helptour', value: 'Provides a link to the Tournament Commands Guide.' },
             { name: '/createtour <aura> <prizemode>', value: 'Creates a new tournament with the specified Aura cost and prize distribution mode. Only organizers can use this command.' },
             { name: '/join <tournamentid> (user | optional)', value: 'Joins an existing tournament. You can also specify another user to join on their behalf if you are the organizer.' },
             { name: '/unjoin <tournamentid> (user | optional)', value: 'Leaves a tournament. You can also specify another user to unjoin on their behalf if you are the organizer.' },
