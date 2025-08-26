@@ -1,0 +1,81 @@
+// utils/rank.js
+export const rankThresholds = [
+      { rank: 'Champion', threshold: 100000 },
+      { rank: 'Challenger', threshold: 50000 },
+      { rank: 'GrandMaster', threshold: 20000 },
+      { rank: 'Master', threshold: 10000 },
+      { rank: 'Diamond I', threshold: 8500 },
+      { rank: 'Diamond II', threshold: 8000 },
+      { rank: 'Diamond III', threshold: 7500 },
+      { rank: 'Diamond IV', threshold: 7000 },
+      { rank: 'Emerald I', threshold: 6500 },
+      { rank: 'Emerald II', threshold: 6000 },
+      { rank: 'Emerald III', threshold: 5500 },
+      { rank: 'Emerald IV', threshold: 5000 },
+      { rank: 'Platinum I', threshold: 4000 },
+      { rank: 'Platinum II', threshold: 3500 },
+      { rank: 'Platinum III', threshold: 3000 },
+      { rank: 'Platinum IV', threshold: 2500 },
+      { rank: 'Gold I', threshold: 1900 },
+      { rank: 'Gold II', threshold: 1800 },
+      { rank: 'Gold III', threshold: 1750 },
+      { rank: 'Gold IV', threshold: 1700 },
+      { rank: 'Silver I', threshold: 1650 },
+      { rank: 'Silver II', threshold: 1600 },
+      { rank: 'Silver III', threshold: 1550 },
+      { rank: 'Silver IV', threshold: 1500 },
+      { rank: 'Bronze I', threshold: 1400 },
+      { rank: 'Bronze II', threshold: 1300 },
+      { rank: 'Bronze III', threshold: 1200 },
+      { rank: 'Bronze IV', threshold: 1100 },
+      { rank: 'Iron I', threshold: 1000 },
+      { rank: 'Iron II', threshold: 950 },
+      { rank: 'Iron III', threshold: 900 },
+      { rank: 'Iron IV', threshold: 850 },
+      { rank: 'Stone I', threshold: 800 },
+      { rank: 'Stone II', threshold: 750 },
+      { rank: 'Stone III', threshold: 700 },
+      { rank: 'Stone IV', threshold: 650 },
+      { rank: 'Cardboard I', threshold: 600 },
+      { rank: 'Cardboard II', threshold: 550 },
+      { rank: 'Cardboard III', threshold: 500 },
+      { rank: 'Cardboard IV', threshold: 450 },
+      { rank: 'Paper I', threshold: 400 },
+      { rank: 'Paper II', threshold: 350 },
+      { rank: 'Paper III', threshold: 300 },
+      { rank: 'Paper IV', threshold: 250 },
+      { rank: 'Paper V', threshold: 200 },
+      { rank: 'Cheese I', threshold: 150 },
+      { rank: 'Cheese II', threshold: 100 },
+      { rank: 'Cheese III', threshold: 50 },
+      { rank: 'Cheese IV', threshold: 25 },
+      { rank: 'Cheese V', threshold: 0 },
+      { rank: 'Cheese VI', threshold: -50 },
+      { rank: 'Dirt I', threshold: -100 },
+      { rank: 'Dirt II', threshold: -200 },
+      { rank: 'Dirt III', threshold: -300 },
+      { rank: 'Dirt IV', threshold: -400 },
+      { rank: 'Dirt V', threshold: -500 },
+      { rank: 'Dirt VI', threshold: -600 },
+      { rank: 'Dust I', threshold: -700 },
+      { rank: 'Dust II', threshold: -800 },
+      { rank: 'Dust III', threshold: -900 },
+      { rank: 'Dust IV', threshold: -1000 },
+      { rank: 'Dust V', threshold: -1100 },
+      { rank: 'Dust VI', threshold: -1200 },
+      { rank: 'Dust VII', threshold: -1300 },
+      { rank: 'Dust VIII', threshold: -1400 },
+      { rank: 'Dust IX', threshold: -1500 },
+      { rank: 'Dust X', threshold: -2000 }
+
+    ];
+
+export function findRank(elo, currentRank) {
+    for (const { rank, threshold } of rankThresholds) {
+      if (elo >= threshold) return rank;
+    }
+    return currentRank;
+  }
+
+
+export default findRank;
