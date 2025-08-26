@@ -19,7 +19,7 @@ export async function execute(interaction) {
             { name: '/drop <tournamentid> (user | optional)', value: 'Drops a user from an ongoing tournament. You can also specify another user to drop on their behalf if you are the organizer.' },
             { name: '/resetround <tournamentid>', value: 'Resets the current round of a tournament, allowing for corrections in case of errors. Only the organizer can use this command.' },
             { name: '/validate <tournamentid>', value: 'Validates all reported match results for the current round of a tournament. Only the organizer can use this command.' },
-            { name: '/leaderboard', value: 'Displays the leaderboard showing top players based on their tournament performance and statistics.' },
+            { name: '/tourleaderboard', value: 'Displays the leaderboard showing top players based on their tournament performance and statistics.' },
             { name: '/fumble (context)', value: 'Indicates that you have just fumbled with this command and wait for other users to vote for 15 minutes.' },
             { name: '/clutch (context)', value: 'Indicates that you have just clutched with this command and wait for other users to vote for 15 minutes.' },
             { name: '/rank (user | optional)', value: 'Displays your rank and statistics. You can also specify another user to view their rank.' },
