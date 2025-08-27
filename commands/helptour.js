@@ -14,7 +14,7 @@ export async function execute(interaction) {
                 '[Open Tournament Commands Guide](https://github.com/GaburaisuVGC/fumble_bot_reloaded/wiki/Tournament-Commands-Guide)'
             );
 
-        await interaction.reply({ embeds: [embed], ephemeral: true });
+        await interaction.reply({ embeds: [embed] });
     } catch (error) {
         console.error('Error executing helptour command:', error);
         await interaction.reply('There was an error showing the help guide. Please try again later.');
