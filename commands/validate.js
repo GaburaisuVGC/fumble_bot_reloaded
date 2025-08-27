@@ -117,21 +117,47 @@ export async function execute(interaction) {
                 await tournament.save({ session });
             } else {
                 // Last Swiss round completed
-                if (tournament.config.topCutSize > 0) {
-                    // Proceed to Top Cut
-                    isTopCutPhase = true; // Mark for next phase logic
-                    tournament.currentRound +=1; // Increment round number for the first top cut round
-                    const topCutPlayers = currentStandings.slice(0, tournament.config.topCutSize);
+                if (tournament.config.cutType === 'points') {
+                    const topCutPlayers = currentStandings.filter(p => p.score >= tournament.config.pointsRequired);
 
-                    // Assign initial seeds
-                    const seedPromises = topCutPlayers.map((ps, index) =>
-                        PlayerStats.updateOne({ _id: ps._id }, { $set: { initialSeed: index + 1 } }).session(session)
-                    );
+                    if (topCutPlayers.length === 0) {
+                        operationMessage += `\nNo players reached the required ${tournament.config.pointsRequired} points for top cut. Finalizing tournament.`;
+                        await finishTournament(interaction, tournament, currentStandings, session);
+                        await session.commitTransaction();
+                        session.endSession();
+                        return;
+                    }
+                    
+                    let bracketSize = 2;
+                    while (bracketSize < topCutPlayers.length) {
+                        bracketSize *= 2;
+                    }
+                    tournament.config.topCutSize = bracketSize;
+                    
+                    const seedPromises = topCutPlayers.map((ps, index) => PlayerStats.updateOne({ _id: ps._id }, { $set: { initialSeed: index + 1 } }).session(session));
                     await Promise.all(seedPromises);
-                     // Re-fetch stats with seeds for these players
-                    const seededTopCutPlayers = await PlayerStats.find({ _id: { $in: topCutPlayers.map(p=>p._id) } }).sort({initialSeed: 1}).session(session);
 
-                    const { pairingsDescriptionList, newMatchesInfo } = await generateTopCutPairings(tournament, seededTopCutPlayers, tournament.currentRound, session);
+                    const seededTopCutPlayers = await PlayerStats.find({ _id: { $in: topCutPlayers.map(p => p._id) } }).sort({ initialSeed: 1 }).session(session);
+                    
+                    tournament.currentRound += 1;
+                    const { pairingsDescriptionList } = await generateTopCutPairings(tournament, seededTopCutPlayers, tournament.currentRound, session);
+                    
+                    nextRoundEmbed.setTitle(`End of Swiss - Top ${topCutPlayers.length} Cut Begins! (Round ${tournament.currentRound})`);
+                    nextRoundEmbed.addFields({ name: `Top ${bracketSize} Pairings`, value: pairingsDescriptionList.join('\n') });
+                    operationMessage += `\nLast Swiss round finished. Generated Top Cut pairings for ${topCutPlayers.length} players.`;
+                    await tournament.save({ session });
+
+                } else if (tournament.config.topCutSize > 0) { // Rank-based cut
+                    isTopCutPhase = true;
+                    tournament.currentRound +=1;
+                    const topCutPlayers = currentStandings.slice(0, tournament.config.topCutSize);
+                    
+                    const seedPromises = topCutPlayers.map((ps, index) => PlayerStats.updateOne({ _id: ps._id }, { $set: { initialSeed: index + 1 } }).session(session));
+                    await Promise.all(seedPromises);
+                    
+                    const seededTopCutPlayers = await PlayerStats.find({ _id: { $in: topCutPlayers.map(p=>p._id) } }).sort({initialSeed: 1}).session(session);
+                    
+                    const { pairingsDescriptionList } = await generateTopCutPairings(tournament, seededTopCutPlayers, tournament.currentRound, session);
                     nextRoundEmbed.setTitle(`End of Swiss - Top ${tournament.config.topCutSize} Cut Begins! (Round ${tournament.currentRound})`);
                     nextRoundEmbed.addFields({ name: `Top ${tournament.config.topCutSize} Pairings`, value: pairingsDescriptionList.join('\n') });
                     operationMessage += `\nLast Swiss round finished. Generated Top ${tournament.config.topCutSize} pairings.`;
@@ -704,163 +730,93 @@ function backtrackPairings(remainingPlayers, currentPairings, pairedPlayerIds) {
   }
 
 async function generateTopCutPairings(tournament, topCutQualifiedStats, topCutRoundNumber, session) {
-    console.log(`Generating Top Cut Round ${topCutRoundNumber} for ${tournament.tournamentId}`);
     const pairingsDescriptionList = [];
     const newMatchesInput = [];
     let matchCounter = await Match.countDocuments({ tournament: tournament._id }).session(session);
+    
+    if (topCutRoundNumber === tournament.config.numSwissRounds + 1) { // First round of Top Cut
+        const bracketSize = tournament.config.topCutSize;
+        const numByes = bracketSize - topCutQualifiedStats.length;
 
-    // topCutQualifiedStats should be sorted by their Swiss seeding (1st, 2nd, etc.)
-    // Their `initialSeed` field in PlayerStats should reflect this (1 to N)
-
-    const numPlayersInCut = topCutQualifiedStats.length;
-
-    if (numPlayersInCut === 2) { // Finals
-        matchCounter++;
-        const matchId = formatMatchId(matchCounter);
-        const p1 = topCutQualifiedStats[0]; // Highest remaining seed
-        const p2 = topCutQualifiedStats[1]; // Second highest remaining seed
-        newMatchesInput.push({
-            matchId,
-            tournament: tournament._id,
-            roundNumber: topCutRoundNumber,
-            isTopCutRound: true,
-            player1: { userId: p1.userId, discordTag: p1.discordTag },
-            player2: { userId: p2.userId, discordTag: p2.discordTag },
-        });
-        pairingsDescriptionList.push(`Finals (Match ${matchId}): <@${p1.userId}> (Seed ${p1.initialSeed}) vs <@${p2.userId}> (Seed ${p2.initialSeed})`);
-    } else if (numPlayersInCut === 4) { // Semifinals (Top 4)
-        // Seeds are 1,2,3,4 based on initial Swiss. Pair 1v4, 2v3.
-        const seed1 = topCutQualifiedStats.find(p => p.initialSeed === 1);
-        const seed2 = topCutQualifiedStats.find(p => p.initialSeed === 2);
-        const seed3 = topCutQualifiedStats.find(p => p.initialSeed === 3);
-        const seed4 = topCutQualifiedStats.find(p => p.initialSeed === 4);
-
-        if (!seed1 || !seed2 || !seed3 || !seed4 ) {
-            console.error("Error: Missing expected seeds for Top 4 generation.", topCutQualifiedStats.map(s => s.initialSeed));
-            pairingsDescriptionList.push("Error: Could not determine correct seeds for Top 4. Manual intervention required.");
-            return { pairingsDescriptionList, newMatchesInfo: [] };
+        for (let i = 0; i < numByes; i++) {
+            const byePlayer = topCutQualifiedStats[i];
+            matchCounter++;
+            newMatchesInput.push({
+                matchId: formatMatchId(matchCounter), tournament: tournament._id, roundNumber: topCutRoundNumber, isTopCutRound: true,
+                player1: { userId: byePlayer.userId, discordTag: byePlayer.discordTag }, player2: null,
+                winnerId: byePlayer.userId, reported: true, bracketPosition: `BYE-${byePlayer.initialSeed}`
+            });
+            pairingsDescriptionList.push(`Match ${formatMatchId(matchCounter)}: <@${byePlayer.userId}> (Seed ${byePlayer.initialSeed}) gets a BYE!`);
         }
+        
+        const playersToPair = topCutQualifiedStats.slice(numByes);
+        let pairings = [];
+        const seedsToPair = playersToPair.map(p => p.initialSeed);
+        const createPair = (s1, s2, pos) => {
+            if (seedsToPair.includes(s1) && seedsToPair.includes(s2)) {
+                pairings.push({ p1: topCutQualifiedStats.find(p=>p.initialSeed===s1), p2: topCutQualifiedStats.find(p=>p.initialSeed===s2), pos });
+            }
+        };
 
-        // Match 1: Seed 1 vs Seed 4
-        matchCounter++;
-        let matchId = formatMatchId(matchCounter);
-        newMatchesInput.push({
-            matchId, tournament: tournament._id, roundNumber: topCutRoundNumber, isTopCutRound: true,
-            player1: { userId: seed1.userId, discordTag: seed1.discordTag },
-            player2: { userId: seed4.userId, discordTag: seed4.discordTag },
-        });
-        pairingsDescriptionList.push(`Semifinal 1 (Match ${matchId}): <@${seed1.userId}> (Seed 1) vs <@${seed4.userId}> (Seed 4)`);
-
-        // Match 2: Seed 2 vs Seed 3
-        matchCounter++;
-        matchId = formatMatchId(matchCounter);
-        newMatchesInput.push({
-            matchId, tournament: tournament._id, roundNumber: topCutRoundNumber, isTopCutRound: true,
-            player1: { userId: seed2.userId, discordTag: seed2.discordTag },
-            player2: { userId: seed3.userId, discordTag: seed3.discordTag },
-        });
-        pairingsDescriptionList.push(`Semifinal 2 (Match ${matchId}): <@${seed2.userId}> (Seed 2) vs <@${seed3.userId}> (Seed 3)`);
-
-    } else if (numPlayersInCut === 8) { // Quarterfinals (Top 8)
-        // Pairings: 1v8, 4v5, 2v7, 3v6
-        const seeds = {};
-        topCutQualifiedStats.forEach(p => seeds[p.initialSeed] = p);
-
-        if (Object.keys(seeds).length !== 8) {
-             console.error("Error: Missing expected seeds for Top 8 generation.", topCutQualifiedStats.map(s => s.initialSeed));
-             pairingsDescriptionList.push("Error: Could not determine correct seeds for Top 8. Manual intervention required.");
-             return { pairingsDescriptionList, newMatchesInfo: [] };
+        if (bracketSize === 4) { createPair(1, 4, 'SF1'); createPair(2, 3, 'SF2'); }
+        else if (bracketSize === 8) { createPair(1, 8, 'QF1'); createPair(4, 5, 'QF2'); createPair(2, 7, 'QF3'); createPair(3, 6, 'QF4'); }
+        else if (bracketSize === 16) {
+            createPair(1, 16, 'R16-1'); createPair(8, 9, 'R16-2'); createPair(5, 12, 'R16-3'); createPair(4, 13, 'R16-4');
+            createPair(2, 15, 'R16-5'); createPair(7, 10, 'R16-6'); createPair(6, 11, 'R16-7'); createPair(3, 14, 'R16-8');
+        } else if (bracketSize >= 32) {
+            const sorted = [...playersToPair].sort((a,b) => a.initialSeed - b.initialSeed);
+            const half = sorted.length / 2;
+            for (let i = 0; i < half; i++) {
+                pairings.push({ p1: sorted[i], p2: sorted[sorted.length - 1 - i], pos: `R${bracketSize}-${i+1}` });
+            }
         }
-
-        const pairings = [
-            [seeds[1], seeds[8]], [seeds[4], seeds[5]], // Top half of bracket
-            [seeds[2], seeds[7]], [seeds[3], seeds[6]], // Bottom half of bracket
-        ];
         for (const pair of pairings) {
-            if (!pair[0] || !pair[1]) {
-                 console.error("Error: A seed was missing for Top 8 pairing construction", pair, seeds);
-                 pairingsDescriptionList.push("Error: Incomplete seed for Top 8. Manual intervention needed.");
-                 continue; // Skip this pairing if a player is missing
-            }
             matchCounter++;
             const matchId = formatMatchId(matchCounter);
             newMatchesInput.push({
                 matchId, tournament: tournament._id, roundNumber: topCutRoundNumber, isTopCutRound: true,
-                player1: { userId: pair[0].userId, discordTag: pair[0].discordTag },
-                player2: { userId: pair[1].userId, discordTag: pair[1].discordTag },
+                player1: { userId: pair.p1.userId, discordTag: pair.p1.discordTag }, player2: { userId: pair.p2.userId, discordTag: pair.p2.discordTag },
+                bracketPosition: pair.pos
             });
-            pairingsDescriptionList.push(`Quarterfinal (Match ${matchId}): <@${pair[0].userId}> (Seed ${pair[0].initialSeed}) vs <@${pair[1].userId}> (Seed ${pair[1].initialSeed})`);
+            pairingsDescriptionList.push(`Match ${matchId} (${pair.pos}): <@${pair.p1.userId}> (Seed ${pair.p1.initialSeed}) vs <@${pair.p2.userId}> (Seed ${pair.p2.initialSeed})`);
         }
-    } else if (numPlayersInCut === 16) { // Top 16
-        const seeds = {};
-        topCutQualifiedStats.forEach(p => seeds[p.initialSeed] = p);
-
-         if (Object.keys(seeds).length !== 16) {
-             console.error("Error: Missing expected seeds for Top 16 generation.", topCutQualifiedStats.map(s => s.initialSeed));
-             pairingsDescriptionList.push("Error: Could not determine correct seeds for Top 16. Manual intervention required.");
-             return { pairingsDescriptionList, newMatchesInfo: [] };
+    } else { // Subsequent Top Cut Rounds
+        const sortedWinners = [...topCutQualifiedStats].sort((a,b) => a.initialSeed - b.initialSeed);
+        const half = sortedWinners.length / 2;
+        let pairings = [];
+        for (let i = 0; i < half; i++) {
+            const p1 = sortedWinners[i];
+            const p2 = sortedWinners[sortedWinners.length - 1 - i];
+            pairings.push({ p1, p2, pos: `R${sortedWinners.length}-${i+1}` });
         }
-        // Standard 16-player bracket:
-        const pairings = [
-            [seeds[1], seeds[16]], [seeds[8], seeds[9]], [seeds[5], seeds[12]], [seeds[4], seeds[13]],
-            [seeds[2], seeds[15]], [seeds[7], seeds[10]], [seeds[6], seeds[11]], [seeds[3], seeds[14]],
-        ];
-         for (const pair of pairings) {
-             if (!pair[0] || !pair[1]) {
-                 console.error("Error: A seed was missing for Top 16 pairing construction", pair, seeds);
-                 pairingsDescriptionList.push("Error: Incomplete seed for Top 16. Manual intervention needed.");
-                 continue;
-            }
+        for (const pair of pairings) {
             matchCounter++;
             const matchId = formatMatchId(matchCounter);
             newMatchesInput.push({
                 matchId, tournament: tournament._id, roundNumber: topCutRoundNumber, isTopCutRound: true,
-                player1: { userId: pair[0].userId, discordTag: pair[0].discordTag },
-                player2: { userId: pair[1].userId, discordTag: pair[1].discordTag },
+                player1: { userId: pair.p1.userId, discordTag: pair.p1.discordTag },
+                player2: { userId: pair.p2.userId, discordTag: pair.p2.discordTag },
+                bracketPosition: pair.pos
             });
-            pairingsDescriptionList.push(`Top 16 (Match ${matchId}): <@${pair[0].userId}> (Seed ${pair[0].initialSeed}) vs <@${pair[1].userId}> (Seed ${pair[1].initialSeed})`);
+            pairingsDescriptionList.push(`Match ${matchId} (${pair.pos}): <@${pair.p1.userId}> (Seed ${pair.p1.initialSeed}) vs <@${pair.p2.userId}> (Seed ${pair.p2.initialSeed})`);
         }
-    } else {
-        console.error(`Unsupported top cut size: ${numPlayersInCut}`);
-        pairingsDescriptionList.push(`Error: Top cut size of ${numPlayersInCut} is not supported for automatic pairing.`);
-        // No matches will be generated
     }
 
-    // Create Match documents and update PlayerStats
-    const createdMatchModels = [];
     if (newMatchesInput.length > 0) {
-        const matchModelsToSave = newMatchesInput.map(mInput => new Match(mInput));
-        await Match.insertMany(matchModelsToSave, { session });
-        createdMatchModels.push(...matchModelsToSave);
-
-        const playerStatsUpdatePromises = [];
-        for (const match of createdMatchModels) {
-            const p1Stat = topCutQualifiedStats.find(p => p.userId === match.player1?.userId);
-            const p2Stat = topCutQualifiedStats.find(p => p.userId === match.player2?.userId);
-
-            if (p1Stat) {
-                playerStatsUpdatePromises.push(
-                    PlayerStats.updateOne({ _id: p1Stat._id }, { $push: { matchesPlayed: match._id } }).session(session)
-                );
-            }
-            if (p2Stat) {
-                 playerStatsUpdatePromises.push(
-                    PlayerStats.updateOne({ _id: p2Stat._id }, { $push: { matchesPlayed: match._id } }).session(session)
-                );
+        const models = newMatchesInput.map(m => new Match(m));
+        await Match.insertMany(models, { session });
+        const promises = [];
+        for (const match of models) {
+            if (match.player2 === null) { // Bye
+                promises.push(PlayerStats.updateOne({ tournament: tournament._id, userId: match.player1.userId }, { $inc: { score: 3, wins: 1 }, $push: { matchesPlayed: match._id } }).session(session));
+            } else {
+                promises.push(PlayerStats.updateOne({ tournament: tournament._id, userId: match.player1.userId }, { $push: { matchesPlayed: match._id } }).session(session));
+                promises.push(PlayerStats.updateOne({ tournament: tournament._id, userId: match.player2.userId }, { $push: { matchesPlayed: match._id } }).session(session));
             }
         }
-        await Promise.all(playerStatsUpdatePromises);
+        await Promise.all(promises);
     }
-
-    return {
-        pairingsDescriptionList,
-        newMatchesInfo: createdMatchModels.map(m => ({
-            id: m.matchId,
-            p1: m.player1?.discordTag,
-            p2: m.player2?.discordTag,
-            isBye: false // No byes in top cut
-        }))
-    };
+    return { pairingsDescriptionList, newMatchesInfo: newMatchesInput };
 }
 
 // Define prize proportions - these can be adjusted
@@ -885,22 +841,16 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
     }
 
     tournament.status = 'finished';
-    const now = new Date();
-    // tournament.endedAt = now; // Consider adding an endedAt field to Tournament schema
-
-    // Assign final ranks if missing
+    
     allPlayerStatsFromTournament.forEach((ps, index) => {
         if (!ps.finalRank) ps.finalRank = index + 1;
     });
 
-    // 2. Prize Distribution
     const totalPrizePool = tournament.auraCost * tournament.participants.length;
     const prizeDistributionMessages = [`Total Prize Pool: ${totalPrizePool} Aura`];
 
-    const userEloIncreases = new Map(); // Key: userId, Value: amount of Elo to increase
-
-    // We'll aggregate user-side DB increments into a single map then perform bulkWrite once.
-    const userAggregatedUpdates = new Map(); // userId => { $inc: {...}, addToSetPlayed: boolean }
+    const userEloIncreases = new Map();
+    const userAggregatedUpdates = new Map();
 
     if (totalPrizePool > 0) {
         if (tournament.prizeMode === 'all') {
@@ -908,31 +858,38 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
             if (winnerStat) {
                 prizeDistributionMessages.push(`Winner <@${winnerStat.userId}> receives ${totalPrizePool} Aura!`);
                 userEloIncreases.set(winnerStat.userId, (userEloIncreases.get(winnerStat.userId) || 0) + totalPrizePool);
-
                 const cur = userAggregatedUpdates.get(winnerStat.userId) || { inc: {}, addServer: false };
                 cur.inc.auraGainedTournaments = (cur.inc.auraGainedTournaments || 0) + totalPrizePool;
                 cur.inc.tournamentWins = (cur.inc.tournamentWins || 0) + 1;
                 userAggregatedUpdates.set(winnerStat.userId, cur);
-            } else {
-                prizeDistributionMessages.push('No winner found for "Winner Takes All" mode. No prizes distributed.');
             }
         } else if (tournament.prizeMode === 'spread') {
-            let proportionsToUse;
-            const topCutSize = tournament.config.topCutSize;
+            let numQualified;
+            if (tournament.config.cutType === 'points') {
+                const qualifiedPlayers = allPlayerStatsFromTournament.filter(p => p.score >= tournament.config.pointsRequired);
+                numQualified = qualifiedPlayers.length;
+            } else {
+                numQualified = tournament.config.topCutSize;
+            }
+
+            let prizeBracket = 1;
+            while (prizeBracket * 2 <= numQualified) {
+                prizeBracket *= 2;
+            }
+
+            let proportionsKey;
+            if (prizeBracket >= 16) proportionsKey = 'top16_cut';
+            else if (prizeBracket >= 8) proportionsKey = 'top8_cut';
+            else if (prizeBracket >= 4) proportionsKey = 'top4_cut';
+            else proportionsKey = 'top4_no_cut';
+            
+            const proportionsToUse = PRIZE_PROPORTIONS[proportionsKey];
             let totalAuraDistributed = 0;
-
-            if (topCutSize === 0) proportionsToUse = PRIZE_PROPORTIONS.top4_no_cut;
-            else if (topCutSize === 4) proportionsToUse = PRIZE_PROPORTIONS.top4_cut;
-            else if (topCutSize === 8) proportionsToUse = PRIZE_PROPORTIONS.top8_cut;
-            else if (topCutSize === 16) proportionsToUse = PRIZE_PROPORTIONS.top16_cut;
-            else proportionsToUse = PRIZE_PROPORTIONS.top4_no_cut; // Default or fallback
-
-            const pendingPrizeAwards = []; // Store who gets what before finalizing
+            const pendingPrizeAwards = [];
 
             for (const rankRange in proportionsToUse) {
                 const proportion = proportionsToUse[rankRange];
                 const prizeForRankRange = Math.floor(totalPrizePool * proportion);
-
                 if (prizeForRankRange <= 0) continue;
 
                 let playersInRankRange = [];
@@ -955,7 +912,6 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
                 }
             }
 
-            // remainder -> winner
             const remainder = totalPrizePool - totalAuraDistributed;
             if (remainder > 0) {
                 const winnerAward = pendingPrizeAwards.find(p => p.finalRank === 1);
@@ -965,13 +921,10 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
                     const winnerStat = allPlayerStatsFromTournament.find(p => p.finalRank === 1);
                     if (winnerStat) {
                         pendingPrizeAwards.push({ userId: winnerStat.userId, amount: remainder, finalRank: 1 });
-                    } else {
-                        prizeDistributionMessages.push(`Note: ${remainder} Aura remainder could not be awarded to a winner.`);
                     }
                 }
             }
 
-            // Aggregate pending awards into userAggregatedUpdates and userEloIncreases
             for (const award of pendingPrizeAwards) {
                 prizeDistributionMessages.push(`<@${award.userId}> (Rank ${award.finalRank}) receives ${award.amount} Aura.`);
                 userEloIncreases.set(award.userId, (userEloIncreases.get(award.userId) || 0) + award.amount);

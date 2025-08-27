@@ -23,6 +23,10 @@ const matchSchema = new Schema({
         type: Boolean,
         default: false
     },
+    bracketPosition: { // e.g., 'QF1', 'SF2'
+        type: String,
+        default: null
+    },
     player1: { // Player 1 can also be null in case of a BYE for player2
         type: playerIdentifierSchema,
         default: null

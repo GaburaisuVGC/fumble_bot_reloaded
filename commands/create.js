@@ -9,7 +9,7 @@ export const data = new SlashCommandBuilder()
         option.setName('aura')
             .setDescription('The amount of Aura (ELO) required to join the tournament.')
             .setRequired(true)
-            .setMinValue(0)) // Aura cost can be 0 for free tournaments
+            .setMinValue(0))
     .addStringOption(option =>
         option.setName('prizemode')
             .setDescription('How the cash prize will be distributed.')
@@ -17,7 +17,20 @@ export const data = new SlashCommandBuilder()
             .addChoices(
                 { name: 'Winner Takes All', value: 'all' },
                 { name: 'Spread Proportionally (Top Cut or Top 4)', value: 'spread' }
-            ));
+            ))
+    .addStringOption(option =>
+        option.setName('cuttype')
+            .setDescription('The method for determining the top cut.')
+            .setRequired(true)
+            .addChoices(
+                { name: 'Rank-based Cut (e.g., Top 8)', value: 'rank' },
+                { name: 'Point-based Cut (e.g., all players with 21+ pts)', value: 'points' }
+            ))
+    .addIntegerOption(option =>
+        option.setName('pointsrequired')
+            .setDescription('Optional: Manually set points required for a point-based cut.')
+            .setRequired(false)
+            .setMinValue(1));
 
 export async function execute(interaction) {
     await interaction.deferReply({ ephemeral: false });
@@ -26,6 +39,8 @@ export async function execute(interaction) {
     const serverId = interaction.guild.id;
     const auraCost = interaction.options.getInteger('aura');
     const prizeMode = interaction.options.getString('prizemode');
+    const cutType = interaction.options.getString('cuttype');
+    const pointsRequired = interaction.options.getInteger('pointsrequired');
 
     // Initialize services
     const userService = new UserService();
@@ -44,7 +59,9 @@ export async function execute(interaction) {
             serverId,
             organizerId,
             auraCost,
-            prizeMode
+            prizeMode,
+            cutType,
+            pointsRequired
         );
 
         // Create success embed
@@ -57,6 +74,7 @@ export async function execute(interaction) {
                 { name: 'Organizer', value: `<@${organizerId}>`, inline: true },
                 { name: 'Aura Cost to Join', value: `💰 ${auraCost} Aura`, inline: true },
                 { name: 'Prize Mode', value: prizeMode === 'all' ? 'Winner Takes All' : 'Proportional Spread', inline: true },
+                { name: 'Cut Type', value: cutType === 'rank' ? 'Rank-based' : `Point-based ${pointsRequired ? `(${pointsRequired} pts)` : '(Auto)'}` },
                 { name: 'Status', value: '🔔 Pending (Waiting for players)', inline: true }
             )
             .setFooter({ text: 'Use /join <tournament_id> to enter!' })
