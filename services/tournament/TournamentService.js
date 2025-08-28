@@ -35,18 +35,36 @@ export default class TournamentService extends ITournamentService {
    * @returns {Object|null} An object containing numSwissRounds and topCutSize, or null if not enough players.
    */
   getTournamentParameters(playerCount) {
-    if (playerCount < 4) return null; // Not enough players
-    if (playerCount >= 4 && playerCount <= 8)
-      return { numSwissRounds: 3, topCutSize: 0 };
-    if (playerCount >= 9 && playerCount <= 16)
-      return { numSwissRounds: 4, topCutSize: 4 };
-    if (playerCount >= 17 && playerCount <= 32)
-      return { numSwissRounds: 5, topCutSize: 8 };
-    if (playerCount >= 33 && playerCount <= 64)
-      return { numSwissRounds: 6, topCutSize: 8 };
-    if (playerCount >= 65 && playerCount <= 128)
-      return { numSwissRounds: 7, topCutSize: 16 };
-    return { numSwissRounds: 8, topCutSize: 16 }; // 129+ players
+    if (playerCount < 4) return null;
+
+    let numSwissRounds, topCutSize, pointsRequired;
+
+    if (playerCount >= 4 && playerCount < 8) {
+        numSwissRounds = 3;
+        topCutSize = 0;
+    } else if (playerCount === 8) {
+        numSwissRounds = 3;
+        topCutSize = 2;
+    } else if (playerCount >= 9 && playerCount <= 16) {
+        numSwissRounds = 4;
+        topCutSize = 4;
+    } else if (playerCount >= 17 && playerCount <= 32) {
+        numSwissRounds = 5;
+        topCutSize = 8;
+    } else if (playerCount >= 33 && playerCount <= 64) {
+        numSwissRounds = 6;
+        topCutSize = 8;
+    } else if (playerCount >= 65 && playerCount <= 128) {
+        numSwissRounds = 7;
+        topCutSize = 16;
+    } else { // 129+ players
+        numSwissRounds = 8;
+        topCutSize = 16;
+    }
+
+    pointsRequired = (numSwissRounds - 2) * 3;
+    
+    return { numSwissRounds, topCutSize, pointsRequired };
   }
   constructor(userService) {
     super();
@@ -59,26 +77,30 @@ export default class TournamentService extends ITournamentService {
    * @param {string} organizerId - The Discord user ID of the organizer.
    * @param {number} auraCost - The Aura (ELO) cost to join the tournament.
    * @param {string} prizeMode - How prizes are distributed ('all' or 'spread').
+   * @param {string} title - The title of the tournament.
+   * @param {string} description - The description of the tournament.
+   * @param {string} cutType - The type of top cut ('rank' or 'points').
+   * @param {number|null} pointsRequired - The points required for a point-based cut, if manually provided.
    * @returns {Promise<Object>} The created tournament.
    */
-  async createTournament(serverId, organizerId, auraCost, prizeMode) {
-    // Generate a unique tournament ID
+  async createTournament(serverId, organizerId, auraCost, prizeMode, title, description, cutType, pointsRequired) {
     const tournamentId = generateTournamentId();
-
-    // Create a new tournament
     const newTournament = new Tournament({
       tournamentId,
       serverId,
       organizerId,
+      title,
+      description,
       auraCost,
       prizeMode,
       status: "pending",
       participants: [],
-      config: {}, // Will be set at startTournament
+      config: {
+        cutType,
+        pointsRequired: pointsRequired || null, // Store manual override, or null
+      },
       currentRound: 0,
     });
-
-    // Save the tournament
     await newTournament.save();
     return newTournament;
   }
@@ -834,108 +856,72 @@ export default class TournamentService extends ITournamentService {
    * @returns {Promise<Object>} The finalized tournament.
    */
   async finalizeTournament(tournamentId) {
-    // Find the tournament
     const tournament = await Tournament.findOne({ tournamentId });
-    if (!tournament) {
-      throw new Error(`Tournament with ID ${tournamentId} not found.`);
-    }
-
-    // Check if tournament is active
-    if (tournament.status !== "active") {
-      throw new Error(
-        `Tournament is not active. Current status: ${tournament.status}`
-      );
-    }
-
-    // Set tournament status to finished
-    tournament.status = "finished";
+    if (!tournament) throw new Error(`Tournament with ID ${tournamentId} not found.`);
+    if (tournament.status !== 'active') throw new Error(`Tournament is not active.`);
+    tournament.status = 'finished';
     await tournament.save();
 
-    // Get final standings
     const standings = await this.getTournamentStandings(tournamentId);
-
-    // Calculate prize pool
     const prizePool = tournament.auraCost * tournament.participants.length;
 
-    // Distribute prizes
     if (prizePool > 0) {
-      if (tournament.prizeMode === "all") {
-        // Winner takes all
-        if (standings.length > 0 && standings[0].activeInTournament) {
-          const winner = await User.findOne({ discordId: standings[0].userId });
-          if (winner) {
-            winner.elo += prizePool;
-            winner.auraGainedTournaments =
-              (winner.auraGainedTournaments || 0) + prizePool;
-            winner.tournamentWins = (winner.tournamentWins || 0) + 1;
-            await winner.save();
-          }
-        }
-      } else if (tournament.prizeMode === "spread") {
-        // Distribute prizes proportionally to top cut players
-        const activePlayers = standings.filter((s) => s.activeInTournament);
-        const topCutPlayers = activePlayers.slice(
-          0,
-          tournament.config.topCutSize
-        );
-
-        // Calculate prize distribution (example: 50% for 1st, 30% for 2nd, 20% for 3rd-4th)
-        const prizes = [];
-        if (topCutPlayers.length > 0) prizes.push(Math.floor(prizePool * 0.5)); // 1st place
-        if (topCutPlayers.length > 1) prizes.push(Math.floor(prizePool * 0.3)); // 2nd place
-        if (topCutPlayers.length > 2) {
-          const remainingPrize = prizePool - prizes.reduce((a, b) => a + b, 0);
-          const perPlayer = Math.floor(
-            remainingPrize / (topCutPlayers.length - 2)
-          );
-          for (let i = 2; i < topCutPlayers.length; i++) {
-            prizes.push(perPlayer);
-          }
-        }
-
-        // Distribute prizes
-        for (let i = 0; i < topCutPlayers.length && i < prizes.length; i++) {
-          const player = await User.findOne({
-            discordId: topCutPlayers[i].userId,
-          });
-          if (player) {
-            player.elo += prizes[i];
-            player.auraGainedTournaments =
-              (player.auraGainedTournaments || 0) + prizes[i];
-            if (i === 0) {
-              player.tournamentWins = (player.tournamentWins || 0) + 1;
+        if (tournament.prizeMode === 'all') {
+            if (standings.length > 0 && standings[0].activeInTournament) {
+                await User.updateOne({ discordId: standings[0].userId }, { $inc: { elo: prizePool, auraGainedTournaments: prizePool, tournamentWins: 1 } });
             }
-            await player.save();
-          }
+        } else if (tournament.prizeMode === 'spread') {
+            let numQualified;
+            if (tournament.config.cutType === 'points') {
+                const qualifiedPlayers = standings.filter(p => p.score >= tournament.config.pointsRequired);
+                numQualified = qualifiedPlayers.length;
+            } else { // rank
+                numQualified = tournament.config.topCutSize;
+            }
+
+            let prizeBracket = 1;
+            while (prizeBracket * 2 <= numQualified) {
+                prizeBracket *= 2;
+            }
+
+            let proportionsKey;
+            if (prizeBracket >= 16) proportionsKey = 'top16_cut';
+            else if (prizeBracket >= 8) proportionsKey = 'top8_cut';
+            else if (prizeBracket >= 4) proportionsKey = 'top4_cut';
+            else proportionsKey = 'top4_no_cut';
+            
+            const proportions = PRIZE_PROPORTIONS[proportionsKey];
+            const topCutPlayers = standings.filter(s => s.initialSeed != null || s.finalRank <= prizeBracket);
+
+            for (const rankRange in proportions) {
+                const proportion = proportions[rankRange];
+                const range = rankRange.split('-').map(Number);
+                const startRank = range[0];
+                const endRank = range.length > 1 ? range[1] : startRank;
+                
+                const playersInRange = topCutPlayers.filter(p => p.finalRank >= startRank && p.finalRank <= endRank);
+                if (playersInRange.length > 0) {
+                    const prizePerPlayer = Math.floor((prizePool * proportion) / playersInRange.length);
+                    for (const player of playersInRange) {
+                        await User.updateOne({ discordId: player.userId }, { $inc: { elo: prizePerPlayer, auraGainedTournaments: prizePerPlayer } });
+                    }
+                }
+            }
         }
-      }
     }
 
-    // Update tournament participation stats for all players
     for (const participant of tournament.participants) {
-      const user = await User.findOne({ discordId: participant.userId });
-      if (user) {
-        user.tournamentParticipations =
-          (user.tournamentParticipations || 0) + 1;
-
-        // Get player stats to update total wins/losses
-        const playerStats = await PlayerStats.findOne({
-          tournament: tournament._id,
-          userId: participant.userId,
-        });
-
+        const playerStats = await PlayerStats.findOne({ tournament: tournament._id, userId: participant.userId });
         if (playerStats) {
-          user.totalWins = (user.totalWins || 0) + playerStats.wins;
-          user.totalLosses = (user.totalLosses || 0) + playerStats.losses;
-
-          // Add server to played on servers if not already there
-          if (!user.playedOnServers.includes(tournament.serverId)) {
-            user.playedOnServers.push(tournament.serverId);
-          }
+            await User.updateOne({ discordId: participant.userId }, {
+                $inc: {
+                    tournamentParticipations: 1,
+                    totalWins: playerStats.wins,
+                    totalLosses: playerStats.losses,
+                },
+                $addToSet: { playedOnServers: tournament.serverId }
+            });
         }
-
-        await user.save();
-      }
     }
 
     return tournament;
@@ -982,10 +968,18 @@ export default class TournamentService extends ITournamentService {
         );
       }
 
-      tournament.config = {
-        numSwissRounds: params.numSwissRounds,
-        topCutSize: params.topCutSize,
-      };
+      // Set the final configuration now that player count is known
+      tournament.config.numSwissRounds = params.numSwissRounds;
+      if (tournament.config.cutType === 'rank') {
+        tournament.config.topCutSize = params.topCutSize;
+      } else { // 'points'
+        // If pointsRequired was not manually set at creation, use the default from params
+        if (!tournament.config.pointsRequired) {
+          tournament.config.pointsRequired = params.pointsRequired;
+        }
+        // topCutSize is determined after Swiss for point-based cuts
+        tournament.config.topCutSize = null;
+      }
       tournament.status = "active";
       tournament.currentRound = 1;
 
@@ -1094,9 +1088,7 @@ export default class TournamentService extends ITournamentService {
 
       const embed = new EmbedBuilder()
         .setColor("#0099ff")
-        .setTitle(
-          `🏆 Tournament Started: ${tournament.tournamentId} - Round 1 🏆`
-        )
+        .setTitle(`Tournament Start — ${tournament.title}`)
         .setDescription(
           `The tournament has officially begun! Here are the pairings for Round 1:`
         )
@@ -1109,7 +1101,9 @@ export default class TournamentService extends ITournamentService {
           {
             name: "Top Cut",
             value:
-              params.topCutSize > 0 ? `Top ${params.topCutSize}` : "No Top Cut",
+              tournament.config.cutType === 'rank'
+                ? (tournament.config.topCutSize > 0 ? `Top ${tournament.config.topCutSize}` : "No Top Cut")
+                : `Point-based (${tournament.config.pointsRequired} pts)`,
             inline: true,
           },
           { name: "Participants", value: `${participantCount}`, inline: true },
@@ -1121,9 +1115,23 @@ export default class TournamentService extends ITournamentService {
           }
         )
         .setFooter({
-          text: `Use /matchreport to submit results. Organizer: ${organizerTag}`,
+          text: `Tournament ID: ${tournament.tournamentId} | Use /matchreport to submit results. Organizer: ${organizerTag}`,
         })
         .setTimestamp();
+
+      if (tournament.config.cutType === 'points') {
+        const P = tournament.config.pointsRequired;
+        let requirementLine = '';
+        if (P % 3 === 0) {
+          requirementLine = `Minimum to qualify: ${P / 3} wins.`;
+        } else {
+          const winsNeeded = Math.ceil(P / 3);
+          const altWins = winsNeeded - 1;
+          const tiesNeeded = P - (altWins * 3);
+          requirementLine = `Minimum to qualify: ${winsNeeded} wins\nAlternative: ${altWins} wins + ${tiesNeeded} ties.`;
+        }
+        embed.addFields({ name: 'Points Requirement', value: requirementLine });
+      }
 
       return {
         tournament,
@@ -1296,39 +1304,67 @@ export default class TournamentService extends ITournamentService {
    * @private
    */
   async startTopCut(tournament) {
-    // Get top players based on Swiss standings
-    const playerStats = await PlayerStats.find({
-      tournament: tournament._id,
-      activeInTournament: true,
-    })
-      .sort({
-        score: -1,
-        tiebreaker1_OWP: -1,
-        tiebreaker2_OOWP: -1,
-      })
-      .limit(tournament.config.topCutSize);
+    let topCutPlayers;
 
-    // Set initial seeds for top cut
-    for (let i = 0; i < playerStats.length; i++) {
-      playerStats[i].initialSeed = i + 1;
-      await playerStats[i].save();
+    if (tournament.config.cutType === 'points') {
+        const allPlayers = await PlayerStats.find({
+            tournament: tournament._id,
+            activeInTournament: true,
+        }).sort({
+            score: -1,
+            tiebreaker1_OWP: -1,
+            tiebreaker2_OOWP: -1,
+        });
+
+        topCutPlayers = allPlayers.filter(p => p.score >= tournament.config.pointsRequired);
+
+        if (topCutPlayers.length === 0) {
+            await this.finalizeTournament(tournament.tournamentId);
+            return;
+        }
+
+        let bracketSize = 2;
+        while (bracketSize < topCutPlayers.length) {
+            bracketSize *= 2;
+        }
+        tournament.config.topCutSize = bracketSize;
+        await tournament.save();
+
+    } else { // 'rank'
+        topCutPlayers = await PlayerStats.find({
+            tournament: tournament._id,
+            activeInTournament: true,
+        })
+        .sort({
+            score: -1,
+            tiebreaker1_OWP: -1,
+            tiebreaker2_OOWP: -1,
+        })
+        .limit(tournament.config.topCutSize);
+    }
+    
+    if (topCutPlayers.length === 0) {
+        await this.finalizeTournament(tournament.tournamentId);
+        return;
     }
 
-    // Mark non-top cut players as inactive
+    for (let i = 0; i < topCutPlayers.length; i++) {
+        topCutPlayers[i].initialSeed = i + 1;
+        await topCutPlayers[i].save();
+    }
+
     await PlayerStats.updateMany(
       {
         tournament: tournament._id,
         activeInTournament: true,
-        _id: { $nin: playerStats.map((p) => p._id) },
+        _id: { $nin: topCutPlayers.map((p) => p._id) },
       },
       { $set: { activeInTournament: false } }
     );
 
-    // Move to top cut round
     tournament.currentRound += 1;
     await tournament.save();
 
-    // Create top cut matches
     await this.createTopCutMatches(tournament);
   }
 
@@ -1339,73 +1375,90 @@ export default class TournamentService extends ITournamentService {
    * @private
    */
   async createTopCutMatches(tournament) {
-    // Get active players
-    const playerStats = await PlayerStats.find({
-      tournament: tournament._id,
-      activeInTournament: true,
-    }).sort({
-      initialSeed: 1,
-    });
+    const playerStats = await PlayerStats.find({ tournament: tournament._id, activeInTournament: true }).sort({ initialSeed: 1 });
+    const session = await mongoose.startSession();
+    try {
+      await this.generateTopCutPairings(tournament, playerStats, tournament.currentRound, session);
+    } finally {
+      session.endSession();
+    }
+  }
 
-    // Determine round name based on number of players
-    let roundName;
-    switch (playerStats.length) {
-      case 2:
-        roundName = "F";
-        break; // Finals
-      case 4:
-        roundName = "SF";
-        break; // Semifinals
-      case 8:
-        roundName = "QF";
-        break; // Quarterfinals
-      case 16:
-        roundName = "R16";
-        break; // Round of 16
-      default:
-        roundName = `R${playerStats.length}`;
+  async generateTopCutPairings(tournament, topCutQualifiedStats, topCutRoundNumber, session) {
+    const newMatchesInput = [];
+    let matchCounter = await Match.countDocuments({ tournament: tournament._id }).session(session);
+    
+    if (topCutRoundNumber === tournament.config.numSwissRounds + 1) { // First round of Top Cut
+        const bracketSize = tournament.config.topCutSize;
+        const numByes = bracketSize - topCutQualifiedStats.length;
+
+        for (let i = 0; i < numByes; i++) {
+            const byePlayer = topCutQualifiedStats[i];
+            matchCounter++;
+            newMatchesInput.push({
+                matchId: formatMatchId(matchCounter), tournament: tournament._id, roundNumber: topCutRoundNumber, isTopCutRound: true,
+                player1: { userId: byePlayer.userId, discordTag: byePlayer.discordTag }, player2: null,
+                winnerId: byePlayer.userId, reported: true, bracketPosition: `BYE-${byePlayer.initialSeed}`
+            });
+        }
+        
+        const playersToPair = topCutQualifiedStats.slice(numByes);
+        let pairings = [];
+        const seedsToPair = playersToPair.map(p => p.initialSeed);
+        const createPair = (s1, s2, pos) => {
+            if (seedsToPair.includes(s1) && seedsToPair.includes(s2)) {
+                pairings.push({ p1: topCutQualifiedStats.find(p=>p.initialSeed===s1), p2: topCutQualifiedStats.find(p=>p.initialSeed===s2), pos });
+            }
+        };
+
+        if (bracketSize === 4) { createPair(1, 4, 'SF1'); createPair(2, 3, 'SF2'); }
+        else if (bracketSize === 8) { createPair(1, 8, 'QF1'); createPair(4, 5, 'QF2'); createPair(2, 7, 'QF3'); createPair(3, 6, 'QF4'); }
+        else if (bracketSize === 16) {
+            createPair(1, 16, 'R16-1'); createPair(8, 9, 'R16-2'); createPair(5, 12, 'R16-3'); createPair(4, 13, 'R16-4');
+            createPair(2, 15, 'R16-5'); createPair(7, 10, 'R16-6'); createPair(6, 11, 'R16-7'); createPair(3, 14, 'R16-8');
+        } else if (bracketSize >= 32) {
+            const sorted = [...playersToPair].sort((a,b) => a.initialSeed - b.initialSeed);
+            const half = sorted.length / 2;
+            for (let i = 0; i < half; i++) {
+                pairings.push({ p1: sorted[i], p2: sorted[sorted.length - 1 - i], pos: `R${bracketSize}-${i+1}` });
+            }
+        }
+        for (const pair of pairings) {
+            matchCounter++;
+            newMatchesInput.push({
+                matchId: formatMatchId(matchCounter), tournament: tournament._id, roundNumber: topCutRoundNumber, isTopCutRound: true,
+                player1: { userId: pair.p1.userId, discordTag: pair.p1.discordTag }, player2: { userId: pair.p2.userId, discordTag: pair.p2.discordTag },
+                bracketPosition: pair.pos
+            });
+        }
+    } else { // Subsequent Top Cut Rounds
+        const sortedWinners = [...topCutQualifiedStats].sort((a,b) => a.initialSeed - b.initialSeed);
+        const half = sortedWinners.length / 2;
+        for (let i = 0; i < half; i++) {
+            matchCounter++;
+            newMatchesInput.push({
+                matchId: formatMatchId(matchCounter), tournament: tournament._id, roundNumber: topCutRoundNumber, isTopCutRound: true,
+                player1: { userId: sortedWinners[i].userId, discordTag: sortedWinners[i].discordTag },
+                player2: { userId: sortedWinners[sortedWinners.length - 1 - i].userId, discordTag: sortedWinners[sortedWinners.length - 1 - i].discordTag },
+                bracketPosition: `R${sortedWinners.length}-${i+1}`
+            });
+        }
     }
 
-    // Create pairings based on seeding
-    const pairings = [];
-    const numPairs = Math.floor(playerStats.length / 2);
-
-    for (let i = 0; i < numPairs; i++) {
-      // Pair 1 vs 8, 2 vs 7, etc. (for 8 players)
-      // Or 1 vs 4, 2 vs 3 (for 4 players)
-      pairings.push([playerStats[i], playerStats[playerStats.length - 1 - i]]);
+    if (newMatchesInput.length > 0) {
+        const models = newMatchesInput.map(m => new Match(m));
+        await Match.insertMany(models, { session });
+        const promises = [];
+        for (const match of models) {
+            if (match.player2 === null) { // Bye
+                promises.push(PlayerStats.updateOne({ tournament: tournament._id, userId: match.player1.userId }, { $inc: { score: 3, wins: 1 }, $push: { matchesPlayed: match._id } }).session(session));
+            } else {
+                promises.push(PlayerStats.updateOne({ tournament: tournament._id, userId: match.player1.userId }, { $push: { matchesPlayed: match._id } }).session(session));
+                promises.push(PlayerStats.updateOne({ tournament: tournament._id, userId: match.player2.userId }, { $push: { matchesPlayed: match._id } }).session(session));
+            }
+        }
+        await Promise.all(promises);
     }
-
-    // Create matches for all pairings
-    const matches = [];
-    let matchCounter = 1;
-
-    for (const [player1, player2] of pairings) {
-      const match = new Match({
-        matchId: `${tournament.tournamentId}-${roundName}-${formatMatchId(
-          matchCounter++
-        )}`,
-        tournament: tournament._id,
-        roundNumber: tournament.currentRound,
-        isTopCutRound: true,
-        player1: {
-          userId: player1.userId,
-          discordTag: player1.discordTag,
-        },
-        player2: {
-          userId: player2.userId,
-          discordTag: player2.discordTag,
-        },
-        winnerId: null,
-        isDraw: false,
-        reported: false,
-      });
-
-      await match.save();
-      matches.push(match);
-    }
-
-    return matches;
   }
 
   /**
@@ -2087,7 +2140,9 @@ export default class TournamentService extends ITournamentService {
         session
       );
 
-      let nextRoundEmbed = new EmbedBuilder().setTimestamp();
+      let nextRoundEmbed = new EmbedBuilder()
+        .setTimestamp()
+        .setFooter({ text: `Tournament ID: ${tournament.tournamentId} | Organizer: ${organizerTag}` });
       let operationMessage = "";
       let pairingsDescriptionList = [];
 
@@ -2095,7 +2150,7 @@ export default class TournamentService extends ITournamentService {
         // --- SWISS ROUNDS ---
         operationMessage = `Validating Swiss Round ${tournament.currentRound}.`;
         nextRoundEmbed.setTitle(
-          `Swiss Round ${tournament.currentRound} Results & Next Round`
+          `Swiss Round ${tournament.currentRound} Results & Next Round — ${tournament.title}`
         );
 
         const standingsDescription = currentStandings
@@ -2175,10 +2230,10 @@ export default class TournamentService extends ITournamentService {
             pairingsDescriptionList = result.pairingsDescriptionList;
 
             nextRoundEmbed.setTitle(
-              `End of Swiss - Top ${tournament.config.topCutSize} Cut Begins! (Round ${tournament.currentRound})`
+              `End of Swiss - Top ${tournament.config.topCutSize} Cut Begins! — ${tournament.title}`
             );
             nextRoundEmbed.addFields({
-              name: `Top ${tournament.config.topCutSize} Pairings`,
+              name: `Top ${tournament.config.topCutSize} Pairings (Round ${tournament.currentRound})`,
               value: pairingsDescriptionList.join("\n"),
             });
             operationMessage += `\nLast Swiss round finished. Generated Top ${tournament.config.topCutSize} pairings.`;
@@ -2187,7 +2242,7 @@ export default class TournamentService extends ITournamentService {
             // No Top Cut, finish tournament
             operationMessage += `\nLast Swiss round finished. No top cut. Finalizing tournament.`;
             nextRoundEmbed.setTitle(
-              `Tournament ${tournament.tournamentId} - Final Swiss Results`
+              `Tournament ${tournament.tournamentId} - Final Swiss Results — ${tournament.title}`
             );
             // Assign final ranks based on Swiss standings
             currentStandings.forEach((ps, index) => {
@@ -2407,9 +2462,7 @@ export default class TournamentService extends ITournamentService {
           else if (result.newMatchesInfo.length === 4)
             stageName = "Quarterfinals"; // Assuming if 8 players made it, next is QF
 
-          nextRoundEmbed.setTitle(
-            `${stageName} Pairings (Round ${tournament.currentRound})`
-          );
+          nextRoundEmbed.setTitle(`${stageName} Pairings (Round ${tournament.currentRound}) — ${tournament.title}`);
           nextRoundEmbed.addFields({
             name: `${stageName} Pairings`,
             value: pairingsDescriptionList.join("\n"),
@@ -3350,10 +3403,9 @@ export default class TournamentService extends ITournamentService {
     // Create final standings embed
     const finalStandingsEmbed = new EmbedBuilder()
       .setColor("#FFD700") // Gold for finished
-      .setTitle(`Tournament ${tournament.tournamentId} - Final Results`)
+      .setTitle(`Tournament ${tournament.tournamentId} - Final Results — ${tournament.title}`)
       .setDescription(`The tournament has concluded!`)
       .addFields(
-        { name: "Tournament ID", value: tournament.tournamentId, inline: true },
         {
           name: "Prize Distribution",
           value: prizeDistributionMessages.join("\n") || "No prizes.",
@@ -3385,7 +3437,7 @@ export default class TournamentService extends ITournamentService {
       .catch(() => null);
 
     finalStandingsEmbed
-      .setFooter({ text: `Organized by: <@${organizerUser?.tag || tournament.organizerId}>` })
+      .setFooter({ text: `Tournament ID: ${tournament.tournamentId} | Organized by: ${organizerUser?.tag || tournament.organizerId}` })
       .setTimestamp();
 
     // Send final results

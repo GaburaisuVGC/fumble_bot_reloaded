@@ -86,14 +86,12 @@ export async function execute(interaction) {
         const allPlayerStatsForTournament = await PlayerStats.find({ tournament: tournament._id }).session(session);
         let isTopCutPhase = tournament.config.topCutSize > 0 && tournament.currentRound > tournament.config.numSwissRounds;
 
-        // 1. Calculate Standings (always useful, especially for Swiss)
-        // For top cut, standings are more about who is still in.
-        const currentStandings = await calculateStandings(tournament._id, allPlayerStatsForTournament, session);
-
         let nextRoundEmbed = new EmbedBuilder().setTimestamp();
         let operationMessage = "";
 
         if (!isTopCutPhase) {
+            // 1. Calculate Standings (only during Swiss rounds)
+            const currentStandings = await calculateStandings(tournament._id, allPlayerStatsForTournament, session);
             // --- SWISS ROUNDS ---
             operationMessage = `Validating Swiss Round ${tournament.currentRound}.`;
             nextRoundEmbed.setTitle(`Swiss Round ${tournament.currentRound} Results & Next Round`);
@@ -117,21 +115,59 @@ export async function execute(interaction) {
                 await tournament.save({ session });
             } else {
                 // Last Swiss round completed
-                if (tournament.config.topCutSize > 0) {
-                    // Proceed to Top Cut
-                    isTopCutPhase = true; // Mark for next phase logic
-                    tournament.currentRound +=1; // Increment round number for the first top cut round
-                    const topCutPlayers = currentStandings.slice(0, tournament.config.topCutSize);
+                if (tournament.participants.length < 8) {
+                    operationMessage += `\nFewer than 8 players. Finishing tournament without a top cut.`;
+                    nextRoundEmbed.setTitle(`Tournament ${tournament.tournamentId} - Final Swiss Results`);
+                    currentStandings.forEach((ps, index) => {
+                        ps.finalRank = index + 1;
+                    });
+                    await finishTournament(interaction, tournament, currentStandings, session);
+                    await session.commitTransaction();
+                    session.endSession();
+                    return;
+                }
+                if (tournament.config.cutType === 'points') {
+                    const topCutPlayers = currentStandings.filter(p => p.score >= tournament.config.pointsRequired);
 
-                    // Assign initial seeds
-                    const seedPromises = topCutPlayers.map((ps, index) =>
-                        PlayerStats.updateOne({ _id: ps._id }, { $set: { initialSeed: index + 1 } }).session(session)
-                    );
+                    if (topCutPlayers.length === 0) {
+                        operationMessage += `\nNo players reached the required ${tournament.config.pointsRequired} points for top cut. Finalizing tournament.`;
+                        await finishTournament(interaction, tournament, currentStandings, session);
+                        await session.commitTransaction();
+                        session.endSession();
+                        return;
+                    }
+                    
+                    let bracketSize = 2;
+                    while (bracketSize < topCutPlayers.length) {
+                        bracketSize *= 2;
+                    }
+                    tournament.config.topCutSize = bracketSize;
+                    
+                    const seedPromises = topCutPlayers.map((ps, index) => PlayerStats.updateOne({ _id: ps._id }, { $set: { initialSeed: index + 1 } }).session(session));
                     await Promise.all(seedPromises);
-                     // Re-fetch stats with seeds for these players
-                    const seededTopCutPlayers = await PlayerStats.find({ _id: { $in: topCutPlayers.map(p=>p._id) } }).sort({initialSeed: 1}).session(session);
 
-                    const { pairingsDescriptionList, newMatchesInfo } = await generateTopCutPairings(tournament, seededTopCutPlayers, tournament.currentRound, session);
+                    const seededTopCutPlayers = await PlayerStats.find({ _id: { $in: topCutPlayers.map(p => p._id) } }).sort({ initialSeed: 1 }).session(session);
+                    
+                    tournament.currentRound += 1;
+                    const { pairingsDescriptionList } = await generateTopCutPairings(tournament, seededTopCutPlayers, tournament.currentRound, session);
+                    
+                    nextRoundEmbed.setTitle(`End of Swiss - Top ${topCutPlayers.length} Cut Begins! (Round ${tournament.currentRound})`);
+                    nextRoundEmbed.addFields({ name: `Top ${bracketSize} Pairings`, value: pairingsDescriptionList.join('\n') });
+                    operationMessage += `\nLast Swiss round finished. Generated Top Cut pairings for ${topCutPlayers.length} players.`;
+                    await tournament.save({ session });
+
+                } else if (tournament.config.topCutSize > 0) { // Rank-based cut
+                    isTopCutPhase = true;
+                    
+                    tournament.currentRound +=1;
+                    const topCutPlayers = currentStandings.slice(0, tournament.config.topCutSize);
+                    
+                    const seedPromises = topCutPlayers.map((ps, index) => PlayerStats.updateOne({ _id: ps._id }, { $set: { initialSeed: index + 1 } }).session(session));
+                    await Promise.all(seedPromises);
+                    
+                    const seededTopCutPlayers = await PlayerStats.find({ _id: { $in: topCutPlayers.map(p=>p._id) } }).sort({initialSeed: 1}).session(session);
+                    
+                    const { pairingsDescriptionList } = await generateTopCutPairings(tournament, seededTopCutPlayers, tournament.currentRound, session);
                     nextRoundEmbed.setTitle(`End of Swiss - Top ${tournament.config.topCutSize} Cut Begins! (Round ${tournament.currentRound})`);
                     nextRoundEmbed.addFields({ name: `Top ${tournament.config.topCutSize} Pairings`, value: pairingsDescriptionList.join('\n') });
                     operationMessage += `\nLast Swiss round finished. Generated Top ${tournament.config.topCutSize} pairings.`;
@@ -155,29 +191,28 @@ export async function execute(interaction) {
         if (isTopCutPhase && tournament.status === 'active') { // Check status again in case it was finished above
             // --- TOP CUT ROUNDS ---
             // Determine current stage of top cut (e.g. QF, SF, F) by number of active players or round number
-            const activeTopCutPlayers = currentStandings.filter(ps =>
-                ps.initialSeed > 0 && // Was part of top cut
-                !currentRoundMatches.some(m => (m.player1?.userId === ps.userId || m.player2?.userId === ps.userId) && m.winnerId !== ps.userId && !m.isDraw) // Did not lose in current round
-            );
             // More accurately, find winners of the *just validated* top cut round
             const winnersOfValidatedRound = [];
             for(const match of currentRoundMatches) {
                 if(match.isTopCutRound && match.reported && match.winnerId) {
                     const winnerStat = allPlayerStatsForTournament.find(ps => ps.userId === match.winnerId);
                     if(winnerStat) winnersOfValidatedRound.push(winnerStat);
-                    // Set elimination stage for the loser
-                    if (match.winnerId) { // If there's a winner, there's a loser
+                    // Set elimination stage for the loser. Only applies to matches with a loser (i.e., not byes).
+                    if (match.winnerId && match.player2) {
                         const loserId = match.player1.userId === match.winnerId ? match.player2.userId : match.player1.userId;
                         if (loserId) { // Ensure loserId is valid
                             let stage = '';
-                            // Determine stage based on how many players *were* in the round being validated.
-                            const playersInValidatedRound = currentRoundMatches.length * 2;
-                            if (playersInValidatedRound === 4) stage = 'SF';
-                            else if (playersInValidatedRound === 8) stage = 'QF';
-                            else if (playersInValidatedRound === 16) stage = 'Top16';
-                            // Finals loser is rank 2, handled separately.
+                            if (match.bracketPosition) {
+                                const baseName = match.bracketPosition.split('-')[0]; // "Quarterfinals", "Top16", etc.
+                                if (baseName === 'Quarterfinals') stage = 'QF';
+                                else if (baseName === 'Semifinals') stage = 'SF';
+                                else if (baseName.startsWith('Top')) stage = baseName; // "Top16", "Top32"
+                                // Finals loser is handled separately and not assigned a stage here.
+                            }
 
                             if (stage) {
+                                // The final ranking logic expects specific keys like 'SF', 'QF', 'Top16', etc.
+                                // This new logic provides them correctly.
                                 await PlayerStats.updateOne(
                                     { tournament: tournament._id, userId: loserId },
                                     { $set: { eliminationStage: stage } }
@@ -207,18 +242,28 @@ export async function execute(interaction) {
                 }
 
                 // Group other top cut players by elimination stage
-                const eliminationStagesOrder = ['SF', 'QF', 'Top16']; // Highest eliminated to lowest
+                const eliminationStagesOrder = [];
+                let size = tournament.config.topCutSize;
+                while (size > 2) {
+                    if (size === 4) eliminationStagesOrder.push('SF');
+                    else if (size === 8) eliminationStagesOrder.push('QF');
+                    else eliminationStagesOrder.push(`Top${size}`);
+                    size /= 2;
+                }
+                eliminationStagesOrder.reverse(); // Process highest stages (e.g. SF) first
                 let currentRank = 3;
 
                 for (const stage of eliminationStagesOrder) {
                     const eliminatedThisStage = allPlayerStatsForTournament.filter(ps => ps.eliminationStage === stage && !ps.finalRank);
-                    // Sort by initialSeed (lower seed is better rank)
+                    if (eliminatedThisStage.length === 0) continue;
+
                     eliminatedThisStage.sort((a, b) => a.initialSeed - b.initialSeed);
 
+                    // Assign sequential ranks to players eliminated in the same stage, sorted by seed
                     eliminatedThisStage.forEach(ps => {
                         ps.finalRank = currentRank;
                         finalRankedStats.push(ps);
-                        currentRank++;
+                        currentRank++; // Increment rank for each player
                     });
                 }
 
@@ -230,13 +275,14 @@ export async function execute(interaction) {
                     finalRankedStats.push(ps);
                 });
 
-                // Add players who did not make top cut - their rank is based on Swiss standings
-                const nonTopCutPlayers = allPlayerStatsForTournament.filter(ps => !(ps.initialSeed > 0));
+                // Add players who did not make top cut - their rank is based on their frozen Swiss standings
+                const nonTopCutPlayers = allPlayerStatsForTournament.filter(ps => ps.initialSeed === undefined || ps.initialSeed === null);
                 nonTopCutPlayers.sort((a, b) => {
-                     if (b.score !== a.score) return b.score - a.score;
-                     if (b.tiebreaker1_OWP !== a.tiebreaker1_OWP) return b.tiebreaker1_OWP - a.tiebreaker1_OWP;
-                     return b.tiebreaker2_OOWP - a.tiebreaker2_OOWP;
+                    if (b.score !== a.score) return b.score - a.score;
+                    if (b.tiebreaker1_OWP !== a.tiebreaker1_OWP) return b.tiebreaker1_OWP - a.tiebreaker1_OWP;
+                    return b.tiebreaker2_OOWP - a.tiebreaker2_OOWP;
                 });
+                
                 nonTopCutPlayers.forEach(ps => {
                     ps.finalRank = currentRank++;
                     finalRankedStats.push(ps);
@@ -358,8 +404,6 @@ async function calculateStandings(tournamentId, allPlayersStatsForTournament, se
         let totalOpponentWinPercentage = 0;
         let opponentsConsideredForOWP = 0;
 
-        // Removed: Player's own bye no longer contributes a phantom opponent to OWP.
-
         for (const opponentId of playerStat.opponents) {
             const opponentStat = playerStatsMap.get(opponentId);
             if (opponentStat) {
@@ -370,11 +414,13 @@ async function calculateStandings(tournamentId, allPlayersStatsForTournament, se
 
                 let opponentWinPerc = 0; // Default to 0 if no actual matches played
                 if (opponentActualMatchesPlayed > 0) {
-                    opponentWinPerc = Math.max(0.25, opponentActualWins / opponentActualMatchesPlayed);
+                    const baseWinPerc = opponentActualWins / opponentActualMatchesPlayed;
+                    if (opponentStat.activeInTournament) {
+                        opponentWinPerc = Math.min(1.0, Math.max(0.25, baseWinPerc));
+                    } else {
+                        opponentWinPerc = Math.min(0.75, Math.max(0.25, baseWinPerc));
+                    }
                 }
-                // If opponentActualMatchesPlayed is 0 (e.g. they only had byes, or no matches),
-                // their contribution to OWP is 0. The 0.25 minimum applies only if they played actual matches.
-
                 totalOpponentWinPercentage += opponentWinPerc;
                 opponentsConsideredForOWP++;
             }
@@ -382,15 +428,14 @@ async function calculateStandings(tournamentId, allPlayersStatsForTournament, se
         playerStat.tiebreaker1_OWP = opponentsConsideredForOWP > 0 ? totalOpponentWinPercentage / opponentsConsideredForOWP : 0;
     }
 
-    // Calculate OOWP (Opponent's Opponent Win Percentage) for each player
-    // This uses the OWP values we just calculated
+    // Calculate OOWP (Opponent's Opponent Win Percentage)
     for (const playerStat of allPlayersStatsForTournament) {
         let totalOpponentsOWP = 0;
         let opponentsConsideredForOOWP = 0;
 
         for (const opponentId of playerStat.opponents) {
             const opponentStat = playerStatsMap.get(opponentId);
-            if (opponentStat) { // opponentStat already has its OWP calculated
+            if (opponentStat) {
                 totalOpponentsOWP += opponentStat.tiebreaker1_OWP;
                 opponentsConsideredForOOWP++;
             }
@@ -398,20 +443,69 @@ async function calculateStandings(tournamentId, allPlayersStatsForTournament, se
         playerStat.tiebreaker2_OOWP = opponentsConsideredForOOWP > 0 ? totalOpponentsOWP / opponentsConsideredForOOWP : 0;
     }
 
-    // Sort players: 1. Score (desc), 2. OWP (desc), 3. OOWP (desc)
+    // Fetch all matches for the tournament to use in head-to-head tiebreaker
+    const allMatches = await Match.find({ tournament: tournamentId }).session(session);
+
+    // Initial sort by primary criteria
     allPlayersStatsForTournament.sort((a, b) => {
         if (b.score !== a.score) return b.score - a.score;
         if (b.tiebreaker1_OWP !== a.tiebreaker1_OWP) return b.tiebreaker1_OWP - a.tiebreaker1_OWP;
         return b.tiebreaker2_OOWP - a.tiebreaker2_OOWP;
     });
 
-    // Update PlayerStats in DB with calculated tiebreakers (optional here, could be done after pairings)
-    // For now, we assume the calling function will handle saving if needed, or we do it here.
-    // Let's do it here for simplicity in this step.
+    // Iterate through the sorted list and resolve ties using head-to-head and random
+    for (let i = 0; i < allPlayersStatsForTournament.length - 1; i++) {
+        const tiedPlayers = [allPlayersStatsForTournament[i]];
+        let j = i + 1;
+        while (
+            j < allPlayersStatsForTournament.length &&
+            allPlayersStatsForTournament[j].score === allPlayersStatsForTournament[i].score &&
+            allPlayersStatsForTournament[j].tiebreaker1_OWP === allPlayersStatsForTournament[i].tiebreaker1_OWP &&
+            allPlayersStatsForTournament[j].tiebreaker2_OOWP === allPlayersStatsForTournament[i].tiebreaker2_OOWP
+        ) {
+            tiedPlayers.push(allPlayersStatsForTournament[j]);
+            j++;
+        }
+
+        if (tiedPlayers.length > 1) {
+            const tiedPlayerIds = tiedPlayers.map(p => p.userId);
+            const headToHeadMatches = allMatches.filter(m => 
+                m.player1 && m.player2 && // Ensure both players exist
+                tiedPlayerIds.includes(m.player1.userId) && tiedPlayerIds.includes(m.player2.userId)
+            );
+
+            tiedPlayers.sort((a, b) => {
+                let aHeadToHeadScore = 0;
+                let bHeadToHeadScore = 0;
+
+                for (const match of headToHeadMatches) {
+                    if (match.winnerId === a.userId && (match.player1.userId === b.userId || match.player2.userId === b.userId)) aHeadToHeadScore++;
+                    if (match.winnerId === b.userId && (match.player1.userId === a.userId || match.player2.userId === a.userId)) bHeadToHeadScore++;
+                }
+
+                if (bHeadToHeadScore !== aHeadToHeadScore) {
+                    return bHeadToHeadScore - aHeadToHeadScore;
+                }
+
+                // If head-to-head is tied (or no matches played), use random tiebreaker
+                return Math.random() - 0.5;
+            });
+
+            // Replace the original slice with the newly sorted one
+            allPlayersStatsForTournament.splice(i, tiedPlayers.length, ...tiedPlayers);
+        }
+        
+        i = j - 1; // Move index to the end of the processed tied group
+    }
+
+    // Update PlayerStats in DB with calculated tiebreakers
     const updatePromises = allPlayersStatsForTournament.map(ps =>
         PlayerStats.updateOne(
             { _id: ps._id },
-            { tiebreaker1_OWP: ps.tiebreaker1_OWP, tiebreaker2_OOWP: ps.tiebreaker2_OOWP }
+            { 
+                tiebreaker1_OWP: ps.tiebreaker1_OWP, 
+                tiebreaker2_OOWP: ps.tiebreaker2_OOWP 
+            }
         ).session(session)
     );
     await Promise.all(updatePromises);
@@ -703,164 +797,200 @@ function backtrackPairings(remainingPlayers, currentPairings, pairedPlayerIds) {
     return null;
   }
 
-async function generateTopCutPairings(tournament, topCutQualifiedStats, topCutRoundNumber, session) {
-    console.log(`Generating Top Cut Round ${topCutRoundNumber} for ${tournament.tournamentId}`);
-    const pairingsDescriptionList = [];
+function getRoundName(numPlayers) {
+    if (numPlayers === 2) return 'Finals';
+    if (numPlayers === 4) return 'Semifinals';
+    if (numPlayers === 8) return 'Quarterfinals';
+    return `Top${numPlayers}`; // e.g., Top16, Top32
+}
+
+/**
+ * Generates a standard tournament bracket structure for a given size.
+ * @param {number} bracketSize The size of the bracket (must be a power of 2).
+ * @returns {object} A bracket structure object with rounds and match progressions.
+ */
+function generateBracket(bracketSize) {
+    if (bracketSize < 2 || (bracketSize & (bracketSize - 1)) !== 0) {
+        throw new Error(`Invalid bracket size: ${bracketSize}. Must be a power of 2.`);
+    }
+
+    function getSeedOrder(size) {
+        if (size === 2) return [1, 2];
+        const rounds = Math.log2(size) - 1;
+        let pls = [1, 2];
+        for (let i = 0; i < rounds; i++) {
+            const out = [];
+            const length = pls.length * 2 + 1;
+            pls.forEach(d => {
+                out.push(d);
+                out.push(length - d);
+            });
+            pls = out;
+        }
+        return pls;
+    }
+
+    const seedOrder = getSeedOrder(bracketSize);
+    const rounds = [];
+    let currentRoundMatchups = [];
+    for (let i = 0; i < seedOrder.length; i += 2) {
+        currentRoundMatchups.push({ p1_source: seedOrder[i], p2_source: seedOrder[i + 1] });
+    }
+
+    while (currentRoundMatchups.length >= 1) {
+        const roundName = getRoundName(currentRoundMatchups.length * 2);
+        const matches = [];
+        for (let i = 0; i < currentRoundMatchups.length; i++) {
+            let matchId = `${roundName.split(' ')[0]}-${i + 1}`;
+            if (roundName === 'Finals') {
+                matchId = 'Final'; // Correctly label the final match
+            }
+            matches.push({
+                matchId: matchId,
+                source_1: currentRoundMatchups[i].p1_source,
+                source_2: currentRoundMatchups[i].p2_source,
+                winnerGoesTo: null,
+            });
+        }
+
+        if (matches.length > 1) {
+            for (let i = 0; i < matches.length; i += 2) {
+                const nextRoundName = getRoundName(matches.length);
+                let nextMatchId = `${nextRoundName.split(' ')[0]}-${Math.floor(i / 2) + 1}`;
+                if (nextRoundName === 'Finals') {
+                    nextMatchId = 'Final';
+                }
+                matches[i].winnerGoesTo = nextMatchId;
+                matches[i + 1].winnerGoesTo = nextMatchId;
+            }
+        }
+        
+        rounds.push({ name: roundName, matches });
+        if (currentRoundMatchups.length === 1) break;
+
+        const nextRoundSources = [];
+        for (let i = 0; i < matches.length; i += 2) {
+            nextRoundSources.push({ p1_source: matches[i].matchId, p2_source: matches[i + 1].matchId });
+        }
+        currentRoundMatchups = nextRoundSources;
+    }
+
+    return { size: bracketSize, rounds };
+}
+
+async function generateTopCutPairings(tournament, players, topCutRoundNumber, session) {
+    let pairingsDescriptionList = [];
     const newMatchesInput = [];
     let matchCounter = await Match.countDocuments({ tournament: tournament._id }).session(session);
 
-    // topCutQualifiedStats should be sorted by their Swiss seeding (1st, 2nd, etc.)
-    // Their `initialSeed` field in PlayerStats should reflect this (1 to N)
+    const isFirstTopCutRound = topCutRoundNumber === tournament.config.numSwissRounds + 1;
 
-    const numPlayersInCut = topCutQualifiedStats.length;
-
-    if (numPlayersInCut === 2) { // Finals
-        matchCounter++;
-        const matchId = formatMatchId(matchCounter);
-        const p1 = topCutQualifiedStats[0]; // Highest remaining seed
-        const p2 = topCutQualifiedStats[1]; // Second highest remaining seed
-        newMatchesInput.push({
-            matchId,
-            tournament: tournament._id,
-            roundNumber: topCutRoundNumber,
-            isTopCutRound: true,
-            player1: { userId: p1.userId, discordTag: p1.discordTag },
-            player2: { userId: p2.userId, discordTag: p2.discordTag },
-        });
-        pairingsDescriptionList.push(`Finals (Match ${matchId}): <@${p1.userId}> (Seed ${p1.initialSeed}) vs <@${p2.userId}> (Seed ${p2.initialSeed})`);
-    } else if (numPlayersInCut === 4) { // Semifinals (Top 4)
-        // Seeds are 1,2,3,4 based on initial Swiss. Pair 1v4, 2v3.
-        const seed1 = topCutQualifiedStats.find(p => p.initialSeed === 1);
-        const seed2 = topCutQualifiedStats.find(p => p.initialSeed === 2);
-        const seed3 = topCutQualifiedStats.find(p => p.initialSeed === 3);
-        const seed4 = topCutQualifiedStats.find(p => p.initialSeed === 4);
-
-        if (!seed1 || !seed2 || !seed3 || !seed4 ) {
-            console.error("Error: Missing expected seeds for Top 4 generation.", topCutQualifiedStats.map(s => s.initialSeed));
-            pairingsDescriptionList.push("Error: Could not determine correct seeds for Top 4. Manual intervention required.");
-            return { pairingsDescriptionList, newMatchesInfo: [] };
+    if (isFirstTopCutRound) {
+        let bracketSize = 2;
+        while (bracketSize < players.length) { bracketSize *= 2; }
+        if (tournament.config.topCutSize !== bracketSize) {
+            tournament.config.topCutSize = bracketSize;
         }
+        
+        const bracket = generateBracket(bracketSize);
+        const firstRoundMatches = bracket.rounds[0].matches;
+        const playerSeedMap = new Map(players.map(p => [p.initialSeed, p]));
 
-        // Match 1: Seed 1 vs Seed 4
-        matchCounter++;
-        let matchId = formatMatchId(matchCounter);
-        newMatchesInput.push({
-            matchId, tournament: tournament._id, roundNumber: topCutRoundNumber, isTopCutRound: true,
-            player1: { userId: seed1.userId, discordTag: seed1.discordTag },
-            player2: { userId: seed4.userId, discordTag: seed4.discordTag },
-        });
-        pairingsDescriptionList.push(`Semifinal 1 (Match ${matchId}): <@${seed1.userId}> (Seed 1) vs <@${seed4.userId}> (Seed 4)`);
-
-        // Match 2: Seed 2 vs Seed 3
-        matchCounter++;
-        matchId = formatMatchId(matchCounter);
-        newMatchesInput.push({
-            matchId, tournament: tournament._id, roundNumber: topCutRoundNumber, isTopCutRound: true,
-            player1: { userId: seed2.userId, discordTag: seed2.discordTag },
-            player2: { userId: seed3.userId, discordTag: seed3.discordTag },
-        });
-        pairingsDescriptionList.push(`Semifinal 2 (Match ${matchId}): <@${seed2.userId}> (Seed 2) vs <@${seed3.userId}> (Seed 3)`);
-
-    } else if (numPlayersInCut === 8) { // Quarterfinals (Top 8)
-        // Pairings: 1v8, 4v5, 2v7, 3v6
-        const seeds = {};
-        topCutQualifiedStats.forEach(p => seeds[p.initialSeed] = p);
-
-        if (Object.keys(seeds).length !== 8) {
-             console.error("Error: Missing expected seeds for Top 8 generation.", topCutQualifiedStats.map(s => s.initialSeed));
-             pairingsDescriptionList.push("Error: Could not determine correct seeds for Top 8. Manual intervention required.");
-             return { pairingsDescriptionList, newMatchesInfo: [] };
-        }
-
-        const pairings = [
-            [seeds[1], seeds[8]], [seeds[4], seeds[5]], // Top half of bracket
-            [seeds[2], seeds[7]], [seeds[3], seeds[6]], // Bottom half of bracket
-        ];
-        for (const pair of pairings) {
-            if (!pair[0] || !pair[1]) {
-                 console.error("Error: A seed was missing for Top 8 pairing construction", pair, seeds);
-                 pairingsDescriptionList.push("Error: Incomplete seed for Top 8. Manual intervention needed.");
-                 continue; // Skip this pairing if a player is missing
-            }
+        for (const bracketMatch of firstRoundMatches) {
+            const p1 = playerSeedMap.get(bracketMatch.source_1);
+            const p2 = playerSeedMap.get(bracketMatch.source_2);
             matchCounter++;
             const matchId = formatMatchId(matchCounter);
-            newMatchesInput.push({
-                matchId, tournament: tournament._id, roundNumber: topCutRoundNumber, isTopCutRound: true,
-                player1: { userId: pair[0].userId, discordTag: pair[0].discordTag },
-                player2: { userId: pair[1].userId, discordTag: pair[1].discordTag },
-            });
-            pairingsDescriptionList.push(`Quarterfinal (Match ${matchId}): <@${pair[0].userId}> (Seed ${pair[0].initialSeed}) vs <@${pair[1].userId}> (Seed ${pair[1].initialSeed})`);
-        }
-    } else if (numPlayersInCut === 16) { // Top 16
-        const seeds = {};
-        topCutQualifiedStats.forEach(p => seeds[p.initialSeed] = p);
 
-         if (Object.keys(seeds).length !== 16) {
-             console.error("Error: Missing expected seeds for Top 16 generation.", topCutQualifiedStats.map(s => s.initialSeed));
-             pairingsDescriptionList.push("Error: Could not determine correct seeds for Top 16. Manual intervention required.");
-             return { pairingsDescriptionList, newMatchesInfo: [] };
-        }
-        // Standard 16-player bracket:
-        const pairings = [
-            [seeds[1], seeds[16]], [seeds[8], seeds[9]], [seeds[5], seeds[12]], [seeds[4], seeds[13]],
-            [seeds[2], seeds[15]], [seeds[7], seeds[10]], [seeds[6], seeds[11]], [seeds[3], seeds[14]],
-        ];
-         for (const pair of pairings) {
-             if (!pair[0] || !pair[1]) {
-                 console.error("Error: A seed was missing for Top 16 pairing construction", pair, seeds);
-                 pairingsDescriptionList.push("Error: Incomplete seed for Top 16. Manual intervention needed.");
-                 continue;
-            }
-            matchCounter++;
-            const matchId = formatMatchId(matchCounter);
-            newMatchesInput.push({
+            const matchData = {
                 matchId, tournament: tournament._id, roundNumber: topCutRoundNumber, isTopCutRound: true,
-                player1: { userId: pair[0].userId, discordTag: pair[0].discordTag },
-                player2: { userId: pair[1].userId, discordTag: pair[1].discordTag },
-            });
-            pairingsDescriptionList.push(`Top 16 (Match ${matchId}): <@${pair[0].userId}> (Seed ${pair[0].initialSeed}) vs <@${pair[1].userId}> (Seed ${pair[1].initialSeed})`);
+                bracketPosition: bracketMatch.matchId,
+                nextBracketPosition: bracketMatch.winnerGoesTo,
+                p1Data: p1,
+                p2Data: p2,
+            };
+
+            if (p1 && p2) {
+                matchData.player1 = { userId: p1.userId, discordTag: p1.discordTag };
+                matchData.player2 = { userId: p2.userId, discordTag: p2.discordTag };
+            } else if (p1 && !p2) {
+                matchData.player1 = { userId: p1.userId, discordTag: p1.discordTag };
+                matchData.player2 = null;
+                matchData.winnerId = p1.userId;
+                matchData.reported = true;
+            } else if (!p1 && p2) {
+                matchData.player1 = { userId: p2.userId, discordTag: p2.discordTag };
+                matchData.player2 = null;
+                matchData.winnerId = p2.userId;
+                matchData.reported = true;
+            }
+            newMatchesInput.push(matchData);
         }
     } else {
-        console.error(`Unsupported top cut size: ${numPlayersInCut}`);
-        pairingsDescriptionList.push(`Error: Top cut size of ${numPlayersInCut} is not supported for automatic pairing.`);
-        // No matches will be generated
-    }
-
-    // Create Match documents and update PlayerStats
-    const createdMatchModels = [];
-    if (newMatchesInput.length > 0) {
-        const matchModelsToSave = newMatchesInput.map(mInput => new Match(mInput));
-        await Match.insertMany(matchModelsToSave, { session });
-        createdMatchModels.push(...matchModelsToSave);
-
-        const playerStatsUpdatePromises = [];
-        for (const match of createdMatchModels) {
-            const p1Stat = topCutQualifiedStats.find(p => p.userId === match.player1?.userId);
-            const p2Stat = topCutQualifiedStats.find(p => p.userId === match.player2?.userId);
-
-            if (p1Stat) {
-                playerStatsUpdatePromises.push(
-                    PlayerStats.updateOne({ _id: p1Stat._id }, { $push: { matchesPlayed: match._id } }).session(session)
-                );
-            }
-            if (p2Stat) {
-                 playerStatsUpdatePromises.push(
-                    PlayerStats.updateOne({ _id: p2Stat._id }, { $push: { matchesPlayed: match._id } }).session(session)
-                );
+        const prevMatches = await Match.find({ tournament: tournament._id, roundNumber: topCutRoundNumber - 1, isTopCutRound: true }).session(session);
+        const pairingsMap = new Map();
+        for (const winner of players) {
+            const prevMatch = prevMatches.find(m => m.winnerId === winner.userId);
+            if (prevMatch && prevMatch.nextBracketPosition) {
+                if (!pairingsMap.has(prevMatch.nextBracketPosition)) {
+                    pairingsMap.set(prevMatch.nextBracketPosition, []);
+                }
+                pairingsMap.get(prevMatch.nextBracketPosition).push(winner);
             }
         }
-        await Promise.all(playerStatsUpdatePromises);
+
+        const bracket = generateBracket(tournament.config.topCutSize);
+        const currentRoundInBracket = bracket.rounds.find(r => r.matches.some(m => pairingsMap.has(m.matchId)));
+
+        for (const [pos, pair] of pairingsMap.entries()) {
+            if (pair.length === 2) {
+                const [p1, p2] = pair.sort((a,b) => a.initialSeed - b.initialSeed);
+                matchCounter++;
+                const matchId = formatMatchId(matchCounter);
+                const bracketMatchInfo = currentRoundInBracket?.matches.find(m => m.matchId === pos);
+
+                newMatchesInput.push({
+                    matchId, tournament: tournament._id, roundNumber: topCutRoundNumber, isTopCutRound: true,
+                    player1: { userId: p1.userId, discordTag: p1.discordTag },
+                    player2: { userId: p2.userId, discordTag: p2.discordTag },
+                    bracketPosition: pos,
+                    nextBracketPosition: bracketMatchInfo?.winnerGoesTo || null,
+                    p1Data: p1,
+                    p2Data: p2
+                });
+            }
+        }
+    }
+    
+    newMatchesInput.sort((a, b) => a.bracketPosition.localeCompare(b.bracketPosition, undefined, { numeric: true }));
+
+    for (const match of newMatchesInput) {
+        if (match.p1Data && match.p2Data) {
+            pairingsDescriptionList.push(`Match ${match.matchId} (${match.bracketPosition}): <@${match.p1Data.userId}> (Seed ${match.p1Data.initialSeed}) vs <@${match.p2Data.userId}> (Seed ${match.p2Data.initialSeed})`);
+        } else if (match.p1Data && !match.p2Data) {
+            pairingsDescriptionList.push(`Match ${match.matchId} (${match.bracketPosition}): <@${match.p1Data.userId}> (Seed ${match.p1Data.initialSeed}) gets a BYE!`);
+        }
     }
 
-    return {
-        pairingsDescriptionList,
-        newMatchesInfo: createdMatchModels.map(m => ({
-            id: m.matchId,
-            p1: m.player1?.discordTag,
-            p2: m.player2?.discordTag,
-            isBye: false // No byes in top cut
-        }))
-    };
+    if (newMatchesInput.length > 0) {
+        const models = newMatchesInput.map(m => new Match(m));
+        await Match.insertMany(models, { session });
+        const promises = [];
+        for (const match of models) {
+            const p1StatUpdate = PlayerStats.updateOne({ tournament: tournament._id, userId: match.player1.userId }, { $push: { matchesPlayed: match._id } });
+            promises.push(p1StatUpdate.session(session));
+
+            if (match.player2) { // Not a bye
+                const p2StatUpdate = PlayerStats.updateOne({ tournament: tournament._id, userId: match.player2.userId }, { $push: { matchesPlayed: match._id } });
+                promises.push(p2StatUpdate.session(session));
+            } else { // It's a bye for p1
+                const byeWinnerUpdate = PlayerStats.updateOne({ tournament: tournament._id, userId: match.player1.userId }, { $inc: { score: 3, wins: 1 } });
+                promises.push(byeWinnerUpdate.session(session));
+            }
+        }
+        await Promise.all(promises);
+    }
+    return { pairingsDescriptionList, newMatchesInfo: newMatchesInput };
 }
 
 // Define prize proportions - these can be adjusted
@@ -885,22 +1015,16 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
     }
 
     tournament.status = 'finished';
-    const now = new Date();
-    // tournament.endedAt = now; // Consider adding an endedAt field to Tournament schema
-
-    // Assign final ranks if missing
+    
     allPlayerStatsFromTournament.forEach((ps, index) => {
         if (!ps.finalRank) ps.finalRank = index + 1;
     });
 
-    // 2. Prize Distribution
     const totalPrizePool = tournament.auraCost * tournament.participants.length;
     const prizeDistributionMessages = [`Total Prize Pool: ${totalPrizePool} Aura`];
 
-    const userEloIncreases = new Map(); // Key: userId, Value: amount of Elo to increase
-
-    // We'll aggregate user-side DB increments into a single map then perform bulkWrite once.
-    const userAggregatedUpdates = new Map(); // userId => { $inc: {...}, addToSetPlayed: boolean }
+    const userEloIncreases = new Map();
+    const userAggregatedUpdates = new Map();
 
     if (totalPrizePool > 0) {
         if (tournament.prizeMode === 'all') {
@@ -908,31 +1032,38 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
             if (winnerStat) {
                 prizeDistributionMessages.push(`Winner <@${winnerStat.userId}> receives ${totalPrizePool} Aura!`);
                 userEloIncreases.set(winnerStat.userId, (userEloIncreases.get(winnerStat.userId) || 0) + totalPrizePool);
-
                 const cur = userAggregatedUpdates.get(winnerStat.userId) || { inc: {}, addServer: false };
                 cur.inc.auraGainedTournaments = (cur.inc.auraGainedTournaments || 0) + totalPrizePool;
                 cur.inc.tournamentWins = (cur.inc.tournamentWins || 0) + 1;
                 userAggregatedUpdates.set(winnerStat.userId, cur);
-            } else {
-                prizeDistributionMessages.push('No winner found for "Winner Takes All" mode. No prizes distributed.');
             }
         } else if (tournament.prizeMode === 'spread') {
-            let proportionsToUse;
-            const topCutSize = tournament.config.topCutSize;
+            let numQualified;
+            if (tournament.config.cutType === 'points') {
+                const qualifiedPlayers = allPlayerStatsFromTournament.filter(p => p.score >= tournament.config.pointsRequired);
+                numQualified = qualifiedPlayers.length;
+            } else {
+                numQualified = tournament.config.topCutSize;
+            }
+
+            let prizeBracket = 1;
+            while (prizeBracket * 2 <= numQualified) {
+                prizeBracket *= 2;
+            }
+
+            let proportionsKey;
+            if (prizeBracket >= 16) proportionsKey = 'top16_cut';
+            else if (prizeBracket >= 8) proportionsKey = 'top8_cut';
+            else if (prizeBracket >= 4) proportionsKey = 'top4_cut';
+            else proportionsKey = 'top4_no_cut';
+            
+            const proportionsToUse = PRIZE_PROPORTIONS[proportionsKey];
             let totalAuraDistributed = 0;
-
-            if (topCutSize === 0) proportionsToUse = PRIZE_PROPORTIONS.top4_no_cut;
-            else if (topCutSize === 4) proportionsToUse = PRIZE_PROPORTIONS.top4_cut;
-            else if (topCutSize === 8) proportionsToUse = PRIZE_PROPORTIONS.top8_cut;
-            else if (topCutSize === 16) proportionsToUse = PRIZE_PROPORTIONS.top16_cut;
-            else proportionsToUse = PRIZE_PROPORTIONS.top4_no_cut; // Default or fallback
-
-            const pendingPrizeAwards = []; // Store who gets what before finalizing
+            const pendingPrizeAwards = [];
 
             for (const rankRange in proportionsToUse) {
                 const proportion = proportionsToUse[rankRange];
                 const prizeForRankRange = Math.floor(totalPrizePool * proportion);
-
                 if (prizeForRankRange <= 0) continue;
 
                 let playersInRankRange = [];
@@ -955,7 +1086,6 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
                 }
             }
 
-            // remainder -> winner
             const remainder = totalPrizePool - totalAuraDistributed;
             if (remainder > 0) {
                 const winnerAward = pendingPrizeAwards.find(p => p.finalRank === 1);
@@ -965,13 +1095,10 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
                     const winnerStat = allPlayerStatsFromTournament.find(p => p.finalRank === 1);
                     if (winnerStat) {
                         pendingPrizeAwards.push({ userId: winnerStat.userId, amount: remainder, finalRank: 1 });
-                    } else {
-                        prizeDistributionMessages.push(`Note: ${remainder} Aura remainder could not be awarded to a winner.`);
                     }
                 }
             }
 
-            // Aggregate pending awards into userAggregatedUpdates and userEloIncreases
             for (const award of pendingPrizeAwards) {
                 prizeDistributionMessages.push(`<@${award.userId}> (Rank ${award.finalRank}) receives ${award.amount} Aura.`);
                 userEloIncreases.set(award.userId, (userEloIncreases.get(award.userId) || 0) + award.amount);
@@ -1110,12 +1237,18 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
     // 3. Announce Final Results
     const finalStandingsEmbed = new EmbedBuilder()
         .setColor('#FFD700') // Gold for finished
-        .setTitle(`🏆 Tournament Finished: ${tournament.tournamentId} 🏆`)
+        .setTitle(`🏆 Tournament Finished: ${tournament.title} 🏆`)
         .setDescription(`The tournament has concluded!`)
         .addFields({ name: 'Prize Distribution', value: prizeDistributionMessages.join('\n') || 'No prizes.' });
 
     let standingsText = allPlayerStatsFromTournament
-        .map(ps => `${ps.finalRank}- <@${ps.userId}> (${ps.wins}-${ps.draws}-${ps.losses}) (${(ps.tiebreaker1_OWP*100).toFixed(1)}% | ${(ps.tiebreaker2_OOWP*100).toFixed(1)}% )`)
+        .map(ps => {
+            if (ps.initialSeed > 0) { // Top Cut Player
+                return `${ps.finalRank}- <@${ps.userId}> (${ps.wins}-${ps.draws}-${ps.losses})`;
+            } else { // Non-Top Cut Player
+                return `${ps.finalRank}- <@${ps.userId}> (${ps.wins}-${ps.draws}-${ps.losses}) (${(ps.tiebreaker1_OWP*100).toFixed(1)}% | ${(ps.tiebreaker2_OOWP*100).toFixed(1)}%)`;
+            }
+        })
         .join('\n');
 
     finalStandingsEmbed.addFields({ name: 'Final Standings', value: standingsText || 'No standings available.' });

@@ -18,6 +18,14 @@ const tournamentSchema = new Schema({
         type: String,
         required: true
     },
+    title: {
+        type: String,
+        default: 'Untitled Tournament'
+    },
+    description: {
+        type: String,
+        default: ''
+    },
     organizerId: {
         type: String,
         required: true
@@ -43,7 +51,15 @@ const tournamentSchema = new Schema({
     // and allow for easier querying of player-specific tournament data.
     config: {
         numSwissRounds: { type: Number },
-        topCutSize: { type: Number }
+        topCutSize: { type: Number },
+        cutType: {
+            type: String,
+            enum: ['rank', 'points'],
+        },
+        pointsRequired: {
+            type: Number,
+            default: null
+        }
     },
     currentRound: {
         type: Number,
