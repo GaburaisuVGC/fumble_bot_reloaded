@@ -405,7 +405,13 @@ async function calculateStandings(tournamentId, allPlayersStatsForTournament, se
 
                 let opponentWinPerc = 0; // Default to 0 if no actual matches played
                 if (opponentActualMatchesPlayed > 0) {
-                    opponentWinPerc = Math.max(0.25, opponentActualWins / opponentActualMatchesPlayed);
+                    const baseWinPerc = opponentActualWins / opponentActualMatchesPlayed;
+                    // Clamp based on whether the opponent is still active
+                    if (opponentStat.activeInTournament) {
+                        opponentWinPerc = Math.min(1.0, Math.max(0.25, baseWinPerc));
+                    } else {
+                        opponentWinPerc = Math.min(0.75, Math.max(0.25, baseWinPerc));
+                    }
                 }
                 // If opponentActualMatchesPlayed is 0 (e.g. they only had byes, or no matches),
                 // their contribution to OWP is 0. The 0.25 minimum applies only if they played actual matches.

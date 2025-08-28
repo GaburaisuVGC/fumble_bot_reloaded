@@ -18,6 +18,14 @@ const tournamentSchema = new Schema({
         type: String,
         required: true
     },
+    title: {
+        type: String,
+        default: 'Untitled Tournament'
+    },
+    description: {
+        type: String,
+        default: ''
+    },
     organizerId: {
         type: String,
         required: true

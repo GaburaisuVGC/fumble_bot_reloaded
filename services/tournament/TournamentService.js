@@ -74,16 +74,20 @@ export default class TournamentService extends ITournamentService {
    * @param {string} organizerId - The Discord user ID of the organizer.
    * @param {number} auraCost - The Aura (ELO) cost to join the tournament.
    * @param {string} prizeMode - How prizes are distributed ('all' or 'spread').
+   * @param {string} title - The title of the tournament.
+   * @param {string} description - The description of the tournament.
    * @param {string} cutType - The type of top cut ('rank' or 'points').
    * @param {number|null} pointsRequired - The points required for a point-based cut, if manually provided.
    * @returns {Promise<Object>} The created tournament.
    */
-  async createTournament(serverId, organizerId, auraCost, prizeMode, cutType, pointsRequired) {
+  async createTournament(serverId, organizerId, auraCost, prizeMode, title, description, cutType, pointsRequired) {
     const tournamentId = generateTournamentId();
     const newTournament = new Tournament({
       tournamentId,
       serverId,
       organizerId,
+      title,
+      description,
       auraCost,
       prizeMode,
       status: "pending",
@@ -1081,9 +1085,7 @@ export default class TournamentService extends ITournamentService {
 
       const embed = new EmbedBuilder()
         .setColor("#0099ff")
-        .setTitle(
-          `🏆 Tournament Started: ${tournament.tournamentId} - Round 1 🏆`
-        )
+        .setTitle(`Tournament Start — ${tournament.title}`)
         .setDescription(
           `The tournament has officially begun! Here are the pairings for Round 1:`
         )
@@ -1110,9 +1112,23 @@ export default class TournamentService extends ITournamentService {
           }
         )
         .setFooter({
-          text: `Use /matchreport to submit results. Organizer: ${organizerTag}`,
+          text: `Tournament ID: ${tournament.tournamentId} | Use /matchreport to submit results. Organizer: ${organizerTag}`,
         })
         .setTimestamp();
+
+      if (tournament.config.cutType === 'points') {
+        const P = tournament.config.pointsRequired;
+        let requirementLine = '';
+        if (P % 3 === 0) {
+          requirementLine = `Minimum to qualify: ${P / 3} wins.`;
+        } else {
+          const winsNeeded = Math.ceil(P / 3);
+          const altWins = winsNeeded - 1;
+          const tiesNeeded = P - (altWins * 3);
+          requirementLine = `Minimum to qualify: ${winsNeeded} wins\nAlternative: ${altWins} wins + ${tiesNeeded} ties.`;
+        }
+        embed.addFields({ name: 'Points Requirement', value: requirementLine });
+      }
 
       return {
         tournament,
@@ -2121,7 +2137,9 @@ export default class TournamentService extends ITournamentService {
         session
       );
 
-      let nextRoundEmbed = new EmbedBuilder().setTimestamp();
+      let nextRoundEmbed = new EmbedBuilder()
+        .setTimestamp()
+        .setFooter({ text: `Tournament ID: ${tournament.tournamentId} | Organizer: ${organizerTag}` });
       let operationMessage = "";
       let pairingsDescriptionList = [];
 
@@ -2129,7 +2147,7 @@ export default class TournamentService extends ITournamentService {
         // --- SWISS ROUNDS ---
         operationMessage = `Validating Swiss Round ${tournament.currentRound}.`;
         nextRoundEmbed.setTitle(
-          `Swiss Round ${tournament.currentRound} Results & Next Round`
+          `Swiss Round ${tournament.currentRound} Results & Next Round — ${tournament.title}`
         );
 
         const standingsDescription = currentStandings
@@ -2209,10 +2227,10 @@ export default class TournamentService extends ITournamentService {
             pairingsDescriptionList = result.pairingsDescriptionList;
 
             nextRoundEmbed.setTitle(
-              `End of Swiss - Top ${tournament.config.topCutSize} Cut Begins! (Round ${tournament.currentRound})`
+              `End of Swiss - Top ${tournament.config.topCutSize} Cut Begins! — ${tournament.title}`
             );
             nextRoundEmbed.addFields({
-              name: `Top ${tournament.config.topCutSize} Pairings`,
+              name: `Top ${tournament.config.topCutSize} Pairings (Round ${tournament.currentRound})`,
               value: pairingsDescriptionList.join("\n"),
             });
             operationMessage += `\nLast Swiss round finished. Generated Top ${tournament.config.topCutSize} pairings.`;
@@ -2221,7 +2239,7 @@ export default class TournamentService extends ITournamentService {
             // No Top Cut, finish tournament
             operationMessage += `\nLast Swiss round finished. No top cut. Finalizing tournament.`;
             nextRoundEmbed.setTitle(
-              `Tournament ${tournament.tournamentId} - Final Swiss Results`
+              `Tournament ${tournament.tournamentId} - Final Swiss Results — ${tournament.title}`
             );
             // Assign final ranks based on Swiss standings
             currentStandings.forEach((ps, index) => {
@@ -2441,9 +2459,7 @@ export default class TournamentService extends ITournamentService {
           else if (result.newMatchesInfo.length === 4)
             stageName = "Quarterfinals"; // Assuming if 8 players made it, next is QF
 
-          nextRoundEmbed.setTitle(
-            `${stageName} Pairings (Round ${tournament.currentRound})`
-          );
+          nextRoundEmbed.setTitle(`${stageName} Pairings (Round ${tournament.currentRound}) — ${tournament.title}`);
           nextRoundEmbed.addFields({
             name: `${stageName} Pairings`,
             value: pairingsDescriptionList.join("\n"),
@@ -3384,10 +3400,9 @@ export default class TournamentService extends ITournamentService {
     // Create final standings embed
     const finalStandingsEmbed = new EmbedBuilder()
       .setColor("#FFD700") // Gold for finished
-      .setTitle(`Tournament ${tournament.tournamentId} - Final Results`)
+      .setTitle(`Tournament ${tournament.tournamentId} - Final Results — ${tournament.title}`)
       .setDescription(`The tournament has concluded!`)
       .addFields(
-        { name: "Tournament ID", value: tournament.tournamentId, inline: true },
         {
           name: "Prize Distribution",
           value: prizeDistributionMessages.join("\n") || "No prizes.",
@@ -3419,7 +3434,7 @@ export default class TournamentService extends ITournamentService {
       .catch(() => null);
 
     finalStandingsEmbed
-      .setFooter({ text: `Organized by: <@${organizerUser?.tag || tournament.organizerId}>` })
+      .setFooter({ text: `Tournament ID: ${tournament.tournamentId} | Organized by: ${organizerUser?.tag || tournament.organizerId}` })
       .setTimestamp();
 
     // Send final results
