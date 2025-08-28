@@ -39,9 +39,12 @@ export default class TournamentService extends ITournamentService {
 
     let numSwissRounds, topCutSize, pointsRequired;
 
-    if (playerCount >= 4 && playerCount <= 8) {
+    if (playerCount >= 4 && playerCount < 8) {
         numSwissRounds = 3;
         topCutSize = 0;
+    } else if (playerCount === 8) {
+        numSwissRounds = 3;
+        topCutSize = 2;
     } else if (playerCount >= 9 && playerCount <= 16) {
         numSwissRounds = 4;
         topCutSize = 4;

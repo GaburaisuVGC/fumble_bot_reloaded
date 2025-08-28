@@ -115,6 +115,17 @@ export async function execute(interaction) {
                 await tournament.save({ session });
             } else {
                 // Last Swiss round completed
+                if (tournament.participants.length < 8) {
+                    operationMessage += `\nFewer than 8 players. Finishing tournament without a top cut.`;
+                    nextRoundEmbed.setTitle(`Tournament ${tournament.tournamentId} - Final Swiss Results`);
+                    currentStandings.forEach((ps, index) => {
+                        ps.finalRank = index + 1;
+                    });
+                    await finishTournament(interaction, tournament, currentStandings, session);
+                    await session.commitTransaction();
+                    session.endSession();
+                    return;
+                }
                 if (tournament.config.cutType === 'points') {
                     const topCutPlayers = currentStandings.filter(p => p.score >= tournament.config.pointsRequired);
 
@@ -393,8 +404,6 @@ async function calculateStandings(tournamentId, allPlayersStatsForTournament, se
         let totalOpponentWinPercentage = 0;
         let opponentsConsideredForOWP = 0;
 
-        // Removed: Player's own bye no longer contributes a phantom opponent to OWP.
-
         for (const opponentId of playerStat.opponents) {
             const opponentStat = playerStatsMap.get(opponentId);
             if (opponentStat) {
@@ -406,16 +415,12 @@ async function calculateStandings(tournamentId, allPlayersStatsForTournament, se
                 let opponentWinPerc = 0; // Default to 0 if no actual matches played
                 if (opponentActualMatchesPlayed > 0) {
                     const baseWinPerc = opponentActualWins / opponentActualMatchesPlayed;
-                    // Clamp based on whether the opponent is still active
                     if (opponentStat.activeInTournament) {
                         opponentWinPerc = Math.min(1.0, Math.max(0.25, baseWinPerc));
                     } else {
                         opponentWinPerc = Math.min(0.75, Math.max(0.25, baseWinPerc));
                     }
                 }
-                // If opponentActualMatchesPlayed is 0 (e.g. they only had byes, or no matches),
-                // their contribution to OWP is 0. The 0.25 minimum applies only if they played actual matches.
-
                 totalOpponentWinPercentage += opponentWinPerc;
                 opponentsConsideredForOWP++;
             }
@@ -423,15 +428,14 @@ async function calculateStandings(tournamentId, allPlayersStatsForTournament, se
         playerStat.tiebreaker1_OWP = opponentsConsideredForOWP > 0 ? totalOpponentWinPercentage / opponentsConsideredForOWP : 0;
     }
 
-    // Calculate OOWP (Opponent's Opponent Win Percentage) for each player
-    // This uses the OWP values we just calculated
+    // Calculate OOWP (Opponent's Opponent Win Percentage)
     for (const playerStat of allPlayersStatsForTournament) {
         let totalOpponentsOWP = 0;
         let opponentsConsideredForOOWP = 0;
 
         for (const opponentId of playerStat.opponents) {
             const opponentStat = playerStatsMap.get(opponentId);
-            if (opponentStat) { // opponentStat already has its OWP calculated
+            if (opponentStat) {
                 totalOpponentsOWP += opponentStat.tiebreaker1_OWP;
                 opponentsConsideredForOOWP++;
             }
@@ -439,20 +443,69 @@ async function calculateStandings(tournamentId, allPlayersStatsForTournament, se
         playerStat.tiebreaker2_OOWP = opponentsConsideredForOOWP > 0 ? totalOpponentsOWP / opponentsConsideredForOOWP : 0;
     }
 
-    // Sort players: 1. Score (desc), 2. OWP (desc), 3. OOWP (desc)
+    // Fetch all matches for the tournament to use in head-to-head tiebreaker
+    const allMatches = await Match.find({ tournament: tournamentId }).session(session);
+
+    // Initial sort by primary criteria
     allPlayersStatsForTournament.sort((a, b) => {
         if (b.score !== a.score) return b.score - a.score;
         if (b.tiebreaker1_OWP !== a.tiebreaker1_OWP) return b.tiebreaker1_OWP - a.tiebreaker1_OWP;
         return b.tiebreaker2_OOWP - a.tiebreaker2_OOWP;
     });
 
-    // Update PlayerStats in DB with calculated tiebreakers (optional here, could be done after pairings)
-    // For now, we assume the calling function will handle saving if needed, or we do it here.
-    // Let's do it here for simplicity in this step.
+    // Iterate through the sorted list and resolve ties using head-to-head and random
+    for (let i = 0; i < allPlayersStatsForTournament.length - 1; i++) {
+        const tiedPlayers = [allPlayersStatsForTournament[i]];
+        let j = i + 1;
+        while (
+            j < allPlayersStatsForTournament.length &&
+            allPlayersStatsForTournament[j].score === allPlayersStatsForTournament[i].score &&
+            allPlayersStatsForTournament[j].tiebreaker1_OWP === allPlayersStatsForTournament[i].tiebreaker1_OWP &&
+            allPlayersStatsForTournament[j].tiebreaker2_OOWP === allPlayersStatsForTournament[i].tiebreaker2_OOWP
+        ) {
+            tiedPlayers.push(allPlayersStatsForTournament[j]);
+            j++;
+        }
+
+        if (tiedPlayers.length > 1) {
+            const tiedPlayerIds = tiedPlayers.map(p => p.userId);
+            const headToHeadMatches = allMatches.filter(m => 
+                m.player1 && m.player2 && // Ensure both players exist
+                tiedPlayerIds.includes(m.player1.userId) && tiedPlayerIds.includes(m.player2.userId)
+            );
+
+            tiedPlayers.sort((a, b) => {
+                let aHeadToHeadScore = 0;
+                let bHeadToHeadScore = 0;
+
+                for (const match of headToHeadMatches) {
+                    if (match.winnerId === a.userId && (match.player1.userId === b.userId || match.player2.userId === b.userId)) aHeadToHeadScore++;
+                    if (match.winnerId === b.userId && (match.player1.userId === a.userId || match.player2.userId === a.userId)) bHeadToHeadScore++;
+                }
+
+                if (bHeadToHeadScore !== aHeadToHeadScore) {
+                    return bHeadToHeadScore - aHeadToHeadScore;
+                }
+
+                // If head-to-head is tied (or no matches played), use random tiebreaker
+                return Math.random() - 0.5;
+            });
+
+            // Replace the original slice with the newly sorted one
+            allPlayersStatsForTournament.splice(i, tiedPlayers.length, ...tiedPlayers);
+        }
+        
+        i = j - 1; // Move index to the end of the processed tied group
+    }
+
+    // Update PlayerStats in DB with calculated tiebreakers
     const updatePromises = allPlayersStatsForTournament.map(ps =>
         PlayerStats.updateOne(
             { _id: ps._id },
-            { tiebreaker1_OWP: ps.tiebreaker1_OWP, tiebreaker2_OOWP: ps.tiebreaker2_OOWP }
+            { 
+                tiebreaker1_OWP: ps.tiebreaker1_OWP, 
+                tiebreaker2_OOWP: ps.tiebreaker2_OOWP 
+            }
         ).session(session)
     );
     await Promise.all(updatePromises);
@@ -1184,7 +1237,7 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
     // 3. Announce Final Results
     const finalStandingsEmbed = new EmbedBuilder()
         .setColor('#FFD700') // Gold for finished
-        .setTitle(`🏆 Tournament Finished: ${tournament.tournamentId} 🏆`)
+        .setTitle(`🏆 Tournament Finished: ${tournament.title} 🏆`)
         .setDescription(`The tournament has concluded!`)
         .addFields({ name: 'Prize Distribution', value: prizeDistributionMessages.join('\n') || 'No prizes.' });
 
