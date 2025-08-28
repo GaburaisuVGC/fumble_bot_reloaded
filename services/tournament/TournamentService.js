@@ -16,12 +16,12 @@ import {
 } from "discord.js";
 import mongoose from "mongoose";
 
-// Define prize proportions - these can be adjusted
 const PRIZE_PROPORTIONS = {
-    top4_no_cut: { 1: 0.50, 2: 0.25, 3: 0.125, 4: 0.125 }, // For tournaments with no top cut but spread prizes
-    top4_cut:    { 1: 0.50, 2: 0.25, 3: 0.125, 4: 0.125 }, // Standard Top 4
-    top8_cut:    { 1: 0.40, 2: 0.20, '3-4': 0.10, '5-8': 0.05 }, // Example for Top 8
-    top16_cut:   { 1: 0.35, 2: 0.18, '3-4': 0.085, '5-8': 0.04, '9-16': 0.02 } // Example for Top 16
+    top4_no_cut: { 1: 0.50, 2: 0.25, 3: 0.125, 4: 0.125 },
+    top4_cut:    { 1: 0.50, 2: 0.25, 3: 0.125, 4: 0.125 },
+    top8_cut:    { 1: 0.40, 2: 0.20, '3-4': 0.10, '5-8': 0.05 },
+    top16_cut:   { 1: 0.35, 2: 0.18, '3-4': 0.085, '5-8': 0.04, '9-16': 0.02 },
+    top32_cut:   { 1: 0.30, 2: 0.15, '3-4': 0.075, '5-8': 0.03, '9-16': 0.015, '17-32': 0.0075 } 
 };
 
 /**
@@ -38,33 +38,70 @@ export default class TournamentService extends ITournamentService {
     if (playerCount < 4) return null;
 
     let numSwissRounds, topCutSize, pointsRequired;
+    let isTwoPhase = false, phase1Rounds = 0, phase2Rounds = 0;
 
     if (playerCount >= 4 && playerCount < 8) {
         numSwissRounds = 3;
         topCutSize = 0;
+        phase1Rounds = 3;
     } else if (playerCount === 8) {
         numSwissRounds = 3;
         topCutSize = 2;
-    } else if (playerCount >= 9 && playerCount <= 16) {
+        phase1Rounds = 3;
+    }
+    else if (playerCount >= 9 && playerCount <= 16) {
         numSwissRounds = 4;
         topCutSize = 4;
+        phase1Rounds = 4;
     } else if (playerCount >= 17 && playerCount <= 32) {
         numSwissRounds = 5;
         topCutSize = 8;
+        phase1Rounds = 5;
     } else if (playerCount >= 33 && playerCount <= 64) {
         numSwissRounds = 6;
         topCutSize = 8;
+        phase1Rounds = 6;
     } else if (playerCount >= 65 && playerCount <= 128) {
-        numSwissRounds = 7;
+        isTwoPhase = true;
+        phase1Rounds = 6;
+        phase2Rounds = 2;
+        numSwissRounds = phase1Rounds + phase2Rounds;
         topCutSize = 16;
-    } else { // 129+ players
-        numSwissRounds = 8;
+    } else if (playerCount >= 129 && playerCount <= 256) {
+        isTwoPhase = true;
+        phase1Rounds = 7;
+        phase2Rounds = 2;
+        numSwissRounds = phase1Rounds + phase2Rounds;
         topCutSize = 16;
+    } else if (playerCount >= 257 && playerCount <= 512) {
+        isTwoPhase = true;
+        phase1Rounds = 8;
+        phase2Rounds = 2;
+        numSwissRounds = phase1Rounds + phase2Rounds;
+        topCutSize = 32; 
+    } else if (playerCount >= 513 && playerCount <= 1024) {
+        isTwoPhase = true;
+        phase1Rounds = 8;
+        phase2Rounds = 3;
+        numSwissRounds = phase1Rounds + phase2Rounds;
+        topCutSize = 32;
+    } else if (playerCount >= 1025 && playerCount <= 2048) {
+        isTwoPhase = true;
+        phase1Rounds = 8;
+        phase2Rounds = 4;
+        numSwissRounds = phase1Rounds + phase2Rounds;
+        topCutSize = 32;
+    } else { // 2049+
+        isTwoPhase = true;
+        phase1Rounds = 9;
+        phase2Rounds = 4;
+        numSwissRounds = phase1Rounds + phase2Rounds;
+        topCutSize = 32;
     }
 
-    pointsRequired = (numSwissRounds - 2) * 3;
-    
-    return { numSwissRounds, topCutSize, pointsRequired };
+    pointsRequired = ((numSwissRounds - 3) * 3) + 1;
+
+    return { numSwissRounds, topCutSize, pointsRequired, isTwoPhase, phase1Rounds, phase2Rounds };
   }
   constructor(userService) {
     super();
@@ -586,14 +623,18 @@ export default class TournamentService extends ITournamentService {
       ).session(session);
 
       // Add match to played matches and opponents
+      const opponentField = tournament.config.isTwoPhase && match.roundNumber > tournament.config.phase1Rounds
+        ? 'opponentsPhase2'
+        : 'opponentsPhase1';
+
       await PlayerStats.updateOne(
         { _id: player1Stat._id },
-        { $addToSet: { matchesPlayed: match._id, opponents: player2Id } }
+        { $addToSet: { matchesPlayed: match._id, opponents: player2Id, [opponentField]: player2Id } }
       ).session(session);
 
       await PlayerStats.updateOne(
         { _id: player2Stat._id },
-        { $addToSet: { matchesPlayed: match._id, opponents: player1Id } }
+        { $addToSet: { matchesPlayed: match._id, opponents: player1Id, [opponentField]: player1Id } }
       ).session(session);
 
       await session.commitTransaction();
@@ -970,6 +1011,10 @@ export default class TournamentService extends ITournamentService {
 
       // Set the final configuration now that player count is known
       tournament.config.numSwissRounds = params.numSwissRounds;
+      tournament.config.isTwoPhase = params.isTwoPhase;
+      tournament.config.phase1Rounds = params.phase1Rounds;
+      tournament.config.phase2Rounds = params.phase2Rounds;
+      
       if (tournament.config.cutType === 'rank') {
         tournament.config.topCutSize = params.topCutSize;
       } else { // 'points'
@@ -1015,11 +1060,11 @@ export default class TournamentService extends ITournamentService {
           playerStatsUpdates.push(
             PlayerStats.updateOne(
               { tournament: tournament._id, userId: player1.userId },
-              { $push: { matchesPlayed: match._id, opponents: player2.userId } }
+              { $addToSet: { matchesPlayed: match._id, opponents: player2.userId, opponentsPhase1: player2.userId } }
             ).session(session),
             PlayerStats.updateOne(
               { tournament: tournament._id, userId: player2.userId },
-              { $push: { matchesPlayed: match._id, opponents: player1.userId } }
+              { $addToSet: { matchesPlayed: match._id, opponents: player1.userId, opponentsPhase1: player1.userId } }
             ).session(session)
           );
           pairingsDescriptionList.push(
@@ -1069,7 +1114,7 @@ export default class TournamentService extends ITournamentService {
           await PlayerStats.updateOne(
             { tournament: tournament._id, userId: byePlayerStat.userId },
             {
-              score: 3, // 3 points for a bye
+              score: 3,
               wins: 1,
               receivedByeInRound: 1,
               $push: { matchesPlayed: byeMatchJustInserted._id }, // Opponent list not updated for a bye by default
@@ -1079,7 +1124,6 @@ export default class TournamentService extends ITournamentService {
           console.error(
             "Could not find the inserted BYE match to update PlayerStats with its ID."
           );
-          // Potentially throw an error or handle this case
         }
       }
 
@@ -1095,7 +1139,7 @@ export default class TournamentService extends ITournamentService {
         .addFields(
           {
             name: "Swiss Rounds",
-            value: `${params.numSwissRounds}`,
+            value: params.isTwoPhase ? `${params.phase1Rounds} Day 1 rounds + ${params.phase2Rounds} Day 2 rounds` : `${params.numSwissRounds}`,
             inline: true,
           },
           {
@@ -1119,16 +1163,22 @@ export default class TournamentService extends ITournamentService {
         })
         .setTimestamp();
 
+      if (tournament.config.isTwoPhase) {
+        const pointsToPass = Math.ceil(tournament.config.phase1Rounds / 2) * 3 + 1;
+        const winThreshold = Math.ceil(tournament.config.phase1Rounds / 2) + 1;
+        embed.addFields({ name: 'Phase 1 Advancement', value: `Players need at least ${pointsToPass} points (e.g. ${winThreshold} wins) to guarantee advancement to Phase 2.` });
+      }
+
       if (tournament.config.cutType === 'points') {
         const P = tournament.config.pointsRequired;
         let requirementLine = '';
         if (P % 3 === 0) {
-          requirementLine = `Minimum to qualify: ${P / 3} wins.`;
+          requirementLine = `Minimum to cut: ${P / 3} wins.`;
         } else {
           const winsNeeded = Math.ceil(P / 3);
           const altWins = winsNeeded - 1;
           const tiesNeeded = P - (altWins * 3);
-          requirementLine = `Minimum to qualify: ${winsNeeded} wins\nAlternative: ${altWins} wins + ${tiesNeeded} ties.`;
+          requirementLine = `Minimum to cut: ${winsNeeded} wins\nAlternative: ${altWins} wins + ${tiesNeeded} ties.`;
         }
         embed.addFields({ name: 'Points Requirement', value: requirementLine });
       }
@@ -1468,65 +1518,124 @@ export default class TournamentService extends ITournamentService {
    * @private
    */
   async calculateTiebreakers(tournament) {
-    // Get all player stats
-    const allPlayerStats = await PlayerStats.find({
-      tournament: tournament._id,
+    const allPlayerStatsForTournament = await PlayerStats.find({ tournament: tournament._id });
+    if (allPlayerStatsForTournament.length === 0) {
+        return;
+    }
+    const allMatches = await Match.find({ tournament: tournament._id });
+    const playerStatsMap = new Map(allPlayerStatsForTournament.map(ps => [ps.userId, ps]));
+
+    allPlayerStatsForTournament.forEach(ps => {
+        const byes = ps.receivedByeInRound > 0 ? 1 : 0;
+        const matchesPlayed = ps.wins + ps.losses + ps.draws;
+        const actualMatches = matchesPlayed - byes;
+        let winPerc = actualMatches > 0 ? (ps.wins - byes + ps.draws * 0.5) / actualMatches : 0;
+
+        // Manually dropped players have their win % capped at 75% for OWP calculations.
+        // This does not apply to players dropped after Phase 1, whose tiebreakers are frozen.
+        if (!ps.activeInTournament && !ps.tiebreakersFrozen) {
+            winPerc = Math.min(winPerc, 0.75);
+        }
+        
+        ps.winPercentage = winPerc;
     });
 
-    // Calculate Opponent Win Percentage (OWP) for each player
-    for (const playerStats of allPlayerStats) {
-      if (playerStats.opponents.length === 0) {
-        playerStats.tiebreaker1_OWP = 0;
-        continue;
-      }
+    for (const playerStat of allPlayerStatsForTournament) {
+        if (playerStat.tiebreakersFrozen) continue;
 
-      // Get all opponents' stats
-      const opponentStats = allPlayerStats.filter((p) =>
-        playerStats.opponents.includes(p.userId)
-      );
+        let totalOpponentWinPercentage = 0;
+        const uniqueOpponentIds = [...new Set(playerStat.opponents)];
+        if (uniqueOpponentIds.length === 0) {
+            playerStat.tiebreaker1_OWP = 0;
+            continue;
+        }
 
-      // Calculate OWP
-      let totalWinPercentage = 0;
-      for (const opponent of opponentStats) {
-        const totalMatches = opponent.wins + opponent.losses + opponent.draws;
-        const winPercentage =
-          totalMatches > 0
-            ? (opponent.wins + opponent.draws * 0.5) / totalMatches
-            : 0;
-        totalWinPercentage += winPercentage;
-      }
-
-      playerStats.tiebreaker1_OWP =
-        opponentStats.length > 0
-          ? totalWinPercentage / opponentStats.length
-          : 0;
+        for (const opponentId of uniqueOpponentIds) {
+            const opponentStat = playerStatsMap.get(opponentId);
+            if (opponentStat) {
+                totalOpponentWinPercentage += Math.max(0.25, opponentStat.winPercentage);
+            }
+        }
+        playerStat.tiebreaker1_OWP = totalOpponentWinPercentage / uniqueOpponentIds.length;
     }
 
-    // Calculate Opponents' Opponent Win Percentage (OOWP) for each player
-    for (const playerStats of allPlayerStats) {
-      if (playerStats.opponents.length === 0) {
-        playerStats.tiebreaker2_OOWP = 0;
-        continue;
-      }
+    for (const playerStat of allPlayerStatsForTournament) {
+        if (playerStat.tiebreakersFrozen) continue;
 
-      // Get all opponents' stats
-      const opponentStats = allPlayerStats.filter((p) =>
-        playerStats.opponents.includes(p.userId)
-      );
-
-      // Calculate OOWP
-      let totalOWP = 0;
-      for (const opponent of opponentStats) {
-        totalOWP += opponent.tiebreaker1_OWP;
-      }
-
-      playerStats.tiebreaker2_OOWP =
-        opponentStats.length > 0 ? totalOWP / opponentStats.length : 0;
+        let totalOpponentsOWP = 0;
+        const uniqueOpponentIds = [...new Set(playerStat.opponents)];
+        if (uniqueOpponentIds.length === 0) {
+            playerStat.tiebreaker2_OOWP = 0;
+            continue;
+        }
+        
+        for (const opponentId of uniqueOpponentIds) {
+            const opponentStat = playerStatsMap.get(opponentId);
+            if (opponentStat) {
+                totalOpponentsOWP += opponentStat.tiebreaker1_OWP;
+            }
+        }
+        playerStat.tiebreaker2_OOWP = totalOpponentsOWP / uniqueOpponentIds.length;
     }
 
-    // Save all player stats
-    for (const playerStats of allPlayerStats) {
-      await playerStats.save();
+    allPlayerStatsForTournament.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        if (b.tiebreaker1_OWP !== a.tiebreaker1_OWP) return b.tiebreaker1_OWP - a.tiebreaker1_OWP;
+        return b.tiebreaker2_OOWP - a.tiebreaker2_OOWP;
+    });
+
+    for (let i = 0; i < allPlayerStatsForTournament.length - 1; i++) {
+        const tiedPlayers = [allPlayerStatsForTournament[i]];
+        let j = i + 1;
+        while (
+            j < allPlayersStatsForTournament.length &&
+            allPlayerStatsForTournament[j].score === allPlayersStatsForTournament[i].score &&
+            allPlayerStatsForTournament[j].tiebreaker1_OWP === allPlayersStatsForTournament[i].tiebreaker1_OWP &&
+            allPlayerStatsForTournament[j].tiebreaker2_OOWP === allPlayersStatsForTournament[i].tiebreaker2_OOWP
+        ) {
+            tiedPlayers.push(allPlayerStatsForTournament[j]);
+            j++;
+        }
+
+        if (tiedPlayers.length > 1) {
+            const tiedPlayerIds = tiedPlayers.map(p => p.userId);
+            const headToHeadMatches = allMatches.filter(m => 
+                m.player1 && m.player2 &&
+                tiedPlayerIds.includes(m.player1.userId) && tiedPlayerIds.includes(m.player2.userId)
+            );
+
+            tiedPlayers.sort((a, b) => {
+                const matchesBetweenPair = headToHeadMatches.filter(
+                    m => (m.player1.userId === a.userId && m.player2.userId === b.userId) || (m.player1.userId === b.userId && m.player2.userId === a.userId)
+                );
+
+                if (matchesBetweenPair.length > 0) {
+                    let aWins = 0;
+                    let bWins = 0;
+                    for (const match of matchesBetweenPair) {
+                        if (match.winnerId === a.userId) aWins++;
+                        if (match.winnerId === b.userId) bWins++;
+                    }
+
+                    if (aWins !== bWins) {
+                        return bWins - aWins;
+                    }
+                }
+                
+                return Math.random() - 0.5;
+            });
+
+            allPlayerStatsForTournament.splice(i, tiedPlayers.length, ...tiedPlayers);
+        }
+        
+        i = j - 1;
+    }
+
+    for (const playerStats of allPlayerStatsForTournament) {
+      await PlayerStats.updateOne({ _id: playerStats._id }, {
+        tiebreaker1_OWP: playerStats.tiebreaker1_OWP,
+        tiebreaker2_OOWP: playerStats.tiebreaker2_OOWP,
+      });
     }
   }
 
@@ -2154,7 +2263,6 @@ export default class TournamentService extends ITournamentService {
         );
 
         const standingsDescription = currentStandings
-          .slice(0, 15) // Show top 15
           .map(
             (ps, index) =>
               `${index + 1}. <@${ps.userId}>: ${
@@ -2309,9 +2417,6 @@ export default class TournamentService extends ITournamentService {
                   stage = "QF"; // Eliminated in Quarterfinals
                 else if (numPlayersInCutPreviously === 16) stage = "Top16"; // Eliminated in Top 16
 
-                // More robust: Determine stage based on how many players *were* in the round being validated.
-                // `currentRoundMatches` are the matches of the round just finished.
-                // The number of players in *that* round was `currentRoundMatches.length * 2` (assuming no byes in TC).
                 const playersInValidatedRound = currentRoundMatches.length * 2;
                 if (playersInValidatedRound === 4)
                   stage = "SF"; // Loser of SF is out at SF stage
@@ -2329,8 +2434,6 @@ export default class TournamentService extends ITournamentService {
               }
             }
           }
-          // If a draw occurred in top cut, it needs special handling (e.g. rematch, or higher seed advances - not specified)
-          // For now, assuming no draws in top cut.
         }
 
         if (
@@ -2379,16 +2482,13 @@ export default class TournamentService extends ITournamentService {
             eliminatedThisStage.sort((a, b) => a.initialSeed - b.initialSeed);
 
             eliminatedThisStage.forEach((ps) => {
-              ps.finalRank = currentRank; // All players eliminated in the same stage (e.g. SF losers) might share a starting rank for prize purposes
-              // but for strict ranking, they get sequential ranks based on seed.
-              // The prompt: "seed 1 will be third, seed 5 will be fourth" -> implies sequential.
+              ps.finalRank = currentRank;
               finalRankedStats.push(ps);
               currentRank++;
             });
           }
 
-          // Add players who made top cut but somehow weren't caught by eliminationStage (shouldn't happen if logic is correct)
-          // and sort them by initialSeed as a fallback.
+          // Add players who made top cut but somehow weren't caught by eliminationStage
           const remainingTopCutPlayers = allPlayerStatsForTournament.filter(
             (ps) => ps.initialSeed > 0 && !ps.finalRank
           );
@@ -3402,7 +3502,7 @@ export default class TournamentService extends ITournamentService {
 
     // Create final standings embed
     const finalStandingsEmbed = new EmbedBuilder()
-      .setColor("#FFD700") // Gold for finished
+      .setColor("#FFD700")
       .setTitle(`Tournament ${tournament.tournamentId} - Final Results — ${tournament.title}`)
       .setDescription(`The tournament has concluded!`)
       .addFields(

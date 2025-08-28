@@ -41,7 +41,7 @@ client.once(Events.ClientReady, async (c) => {
 
     console.log('Global commands registered.');
 
-    // Schedule daily summary task at 4 AM (UTC+2)
+    // Schedule daily summary task at 7 AM (UTC+2)
     schedule('0 7 * * *', () => {
         console.log('Sending daily summary...');
         showdownService.sendDailySummary();

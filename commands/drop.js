@@ -15,7 +15,7 @@ export const data = new SlashCommandBuilder()
             .setRequired(true));
 
 export async function execute(interaction) {
-    await interaction.deferReply({ ephemeral: true }); // Ephemeral for organizer actions
+    await interaction.deferReply({ ephemeral: false });
 
     try {
         const tournamentIdInput = interaction.options.getString('tournamentid').toUpperCase();
@@ -31,8 +31,8 @@ export async function execute(interaction) {
 
         // Send success message
         await interaction.editReply({
-            content: `Player <@${targetUser.id}> has been dropped from tournament ${tournamentIdInput}. They will not be included in future pairings. ${result.matchUpdateMessage}`,
-            allowedMentions: { users: [targetUser.id] } // Ensure the user gets pinged
+            content: `Player <@${targetUser.id}> has been dropped from tournament ${tournamentIdInput}. This drop is definitive and the player will not be included in future pairings. ${result.matchUpdateMessage}`,
+            allowedMentions: { users: [targetUser.id] }
         });
     } catch (error) {
         console.error(`Error dropping player for tournament:`, error);

@@ -83,7 +83,6 @@ export async function execute(interaction) {
         result.rankChange
       );
 
-      // Update the message with the result
       await interaction.editReply({ embeds: [resultEmbed] });
     } catch (error) {
       console.error("Error editing response:", error);

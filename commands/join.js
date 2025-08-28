@@ -48,7 +48,7 @@ export async function execute(interaction) {
 
         // Create success embed
         const embed = new EmbedBuilder()
-            .setColor('#00FF00') // Green for success
+            .setColor('#00FF00') 
             .setTitle('✅ Successfully Joined Tournament!')
             .setDescription(
                 targetUserId === organizerExecutingId
@@ -66,7 +66,7 @@ export async function execute(interaction) {
             embed.setFooter({ text: `Organizer: ${tournamentOrganizerDetails.tag}` });
         } catch (e) {
             console.warn(`Could not fetch organizer tag for ${result.tournament.organizerId} in join command:`, e.message);
-            embed.setFooter({ text: `Organizer: <@${result.tournament.organizerId}>` }); // Fallback to mention
+            embed.setFooter({ text: `Organizer: <@${result.tournament.organizerId}>` });
         }
         embed.setTimestamp();
 

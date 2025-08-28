@@ -16,7 +16,8 @@ With Fumble Bot, you can **track your ELO ratings** and **organize tournaments**
 ### Tournament Organization
 - Easily **create and manage tournaments**.
 - Support for joining, leaving, reporting matches, and validating results.
-- Automated brackets and leaderboard updates.
+- Day 2 & Asymmetrical Top Cut available.
+- Automated brackets and standings updates.
 - Organizers have dedicated tools for smooth management.
 
 ### Fumbles & Clutches

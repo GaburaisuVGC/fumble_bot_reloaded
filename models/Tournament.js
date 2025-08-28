@@ -3,7 +3,6 @@ import { Schema, model } from 'mongoose';
 const participantSchema = new Schema({
     userId: { type: String, required: true },
     discordTag: { type: String, required: true },
-    // usernameShowdown: { type: String } // Optional, if needed later
 }, { _id: false });
 
 const tournamentSchema = new Schema({
@@ -42,13 +41,11 @@ const tournamentSchema = new Schema({
     },
     status: {
         type: String,
-        enum: ['pending', 'active', 'finished', 'cancelled'], // Added cancelled
+        enum: ['pending', 'active', 'finished', 'cancelled'],
         default: 'pending',
         required: true
     },
     participants: [participantSchema],
-    // We will create PlayerStats separately to keep this schema cleaner
-    // and allow for easier querying of player-specific tournament data.
     config: {
         numSwissRounds: { type: Number },
         topCutSize: { type: Number },
@@ -59,6 +56,18 @@ const tournamentSchema = new Schema({
         pointsRequired: {
             type: Number,
             default: null
+        },
+        isTwoPhase: {
+            type: Boolean,
+            default: false
+        },
+        phase1Rounds: {
+            type: Number,
+            default: 0
+        },
+        phase2Rounds: {
+            type: Number,
+            default: 0
         }
     },
     currentRound: {

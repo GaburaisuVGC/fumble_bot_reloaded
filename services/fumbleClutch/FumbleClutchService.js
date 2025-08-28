@@ -1,7 +1,6 @@
 import { EmbedBuilder } from 'discord.js';
 import User from '../../models/User.js';
 import IFumbleClutchService from '../../interfaces/IFumbleClutchService.js';
-import { findRank } from '../../utils/rank.js';
 
 /**
  * Service for handling fumbles and clutches.

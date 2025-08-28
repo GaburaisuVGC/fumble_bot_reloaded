@@ -1,4 +1,3 @@
-// utils/rank.js
 export const rankThresholds = [
       { rank: 'Champion', threshold: 100000 },
       { rank: 'Challenger', threshold: 50000 },

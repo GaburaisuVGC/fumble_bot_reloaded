@@ -33,7 +33,6 @@ export async function updateUserRankPeakLow(userDoc, newEloValue, session = null
     userDoc.rank = findRank(newEloValue, userDoc.rank); // findRank needs the new Elo
 
     await userDoc.save({ session });
-    // console.log(`User ${userDoc.discordId} stats updated: Elo=${userDoc.elo}, Rank=${userDoc.rank}, Peak=${userDoc.peakElo}, Low=${userDoc.lowestElo}`);
 }
 
 /**

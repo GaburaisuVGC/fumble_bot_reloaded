@@ -11,7 +11,7 @@ export const data = new SlashCommandBuilder()
             .setRequired(true));
 
 export async function execute(interaction) {
-    await interaction.deferReply({ ephemeral: false }); // Potentially long operation, public response
+    await interaction.deferReply({ ephemeral: false });
 
     try {
         const tournamentIdInput = interaction.options.getString('tournamentid').toUpperCase();

@@ -13,8 +13,6 @@ function generateAlphanumericId(length) {
 
 /**
  * Generates a unique 6-character alphanumeric tournament ID.
- * Potentially, we might want to check for collisions if the bot becomes very popular,
- * but for now, a random 6-char ID should be sufficiently unique.
  * @returns {string}
  */
 export function generateTournamentId() {
@@ -29,16 +27,6 @@ export function generateTournamentId() {
 export function formatMatchId(number) {
     return number.toString().padStart(3, '0');
 }
-
-// Example of how match IDs could be generated sequentially for a tournament:
-// let matchCounter = 0;
-// export function generateNextMatchId() {
-//     matchCounter++;
-//     return formatMatchId(matchCounter);
-// }
-// This counter would need to be reset or managed per tournament.
-// A better approach will be to query the count of existing matches for a tournament
-// and increment that when creating a new match.
 
 /**
  * Shuffles an array in place using Fisher-Yates algorithm.
