@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
-import Server, { isOrganizer } from '../models/Server.js';
+import Server, { isOrganizer, isBotOwner } from '../models/Server.js';
 
 export const data = new SlashCommandBuilder()
     .setName('setshowdownroom')
@@ -17,10 +17,11 @@ export async function execute(interaction) {
         // Check if the user is either an admin or an organizer
         const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
         const organizer = await isOrganizer(guildId, userId);
+        const botOwner = isBotOwner(userId);
 
-        if (!isAdmin && !organizer) {
+        if (!isAdmin && !organizer && !botOwner) {
             await interaction.reply({
-                content: "🚫 You must be an **organizer** or **administrator** to use this command.",
+                content: "🚫 You must be an **organizer**, **administrator** or **bot owner** to set the Showdown room.",
                 ephemeral: true
             });
             return;

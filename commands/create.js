@@ -5,7 +5,7 @@ import {
 } from "discord.js";
 import TournamentService from "../services/tournament/TournamentService.js";
 import UserService from "../services/user/UserService.js";
-import { isOrganizer } from "../models/Server.js";
+import { isOrganizer, isBotOwner } from "../models/Server.js";
 
 export const data = new SlashCommandBuilder()
   .setName("createtour")
@@ -101,11 +101,12 @@ export async function execute(interaction) {
       PermissionFlagsBits.Administrator
     );
     const organizer = await isOrganizer(guildId, userId);
+    const botOwner = isBotOwner(userId);
 
-    if (!isAdmin && !organizer) {
+    if (!isAdmin && !organizer && !botOwner) {
       await interaction.reply({
         content:
-          "🚫 You must be an **organizer** or **administrator** to use this command.",
+          "🚫 You must be an **organizer** or **administrator** or **bot owner** to use this command.",
         ephemeral: true,
       });
       return;
