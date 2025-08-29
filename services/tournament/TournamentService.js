@@ -1174,7 +1174,7 @@ export default class TournamentService extends ITournamentService {
         value: `[View Pairings on Website](${process.env.WEBSITE_URL}/pairings/${tournament.tournamentId}/)`,
       });
 
-      if (participantCount <= 32) {
+      if (participantCount <= 8) {
         embed.addFields({
             name: "Round 1 Pairings",
             value: pairingsDescriptionList.join('\n') || 'No pairings generated.'

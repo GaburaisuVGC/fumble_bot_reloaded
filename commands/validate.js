@@ -96,7 +96,7 @@ export async function execute(interaction) {
             nextRoundEmbed.setTitle(`Swiss Round ${tournament.currentRound} Results & Next Round`);
 
             nextRoundEmbed.addFields({ name: `Online Standings`, value: `[View Standings on Website](${process.env.WEBSITE_URL}/standings/${tournament.tournamentId})` });
-            if (tournament.participants.length <= 32) {
+            if (tournament.participants.length <= 8) {
                 const standingsDescription = currentStandings
                     .map((ps, index) => `${index + 1}. <@${ps.userId}>: (${ps.wins}-${ps.draws}-${ps.losses}) (${(ps.tiebreaker1_OWP*100).toFixed(1)}% | ${(ps.tiebreaker2_OOWP*100).toFixed(1)}% )`)
                     .join('\n');
@@ -153,7 +153,7 @@ export async function execute(interaction) {
                 const { pairingsDescriptionList, newMatchesInfo } = await generateNextSwissRoundPairings(tournament, currentStandings, tournament.currentRound, session);
                 if (newMatchesInfo.length > 0) {
                     nextRoundEmbed.addFields({ name: `Online Pairings`, value: `[View Pairings on Website](${process.env.WEBSITE_URL}/pairings/${tournament.tournamentId})` });
-                    if (tournament.participants.length <= 32) {
+                    if (tournament.participants.length <= 8) {
                         nextRoundEmbed.addFields({ name: `Swiss Round ${tournament.currentRound} Pairings`, value: pairingsDescriptionList.join('\n') });
                     }
                     operationMessage += `\nGenerated pairings for Swiss Round ${tournament.currentRound}.`;
