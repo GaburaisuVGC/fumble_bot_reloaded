@@ -406,7 +406,7 @@ export async function execute(interaction) {
             // Tournament is finished (and finishTournament was called, which also sets status)
             // Leaderboard display is handled here after commit.
             try {
-                const { displayTournamentLeaderboard } = await import('../commands/leaderboard.js');
+                const { displayTournamentLeaderboard } = await import('./leaderboard.js');
                 if (interaction.client && tournament.serverId && interaction.channelId) {
                     console.log(`Attempting to display leaderboard for finished tournament ${tournament.tournamentId} on server ${tournament.serverId}`);
 
