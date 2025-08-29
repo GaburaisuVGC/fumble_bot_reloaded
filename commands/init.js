@@ -34,8 +34,8 @@ export async function execute(interaction) {
         // Create a welcome embed
         const welcomeEmbed = new EmbedBuilder()
             .setColor('#0099ff')
-            .setTitle('Bienvenue sur Fumble Bot')
-            .setDescription(`Bienvenue, ${user.username}!`)
+            .setTitle('Welcome to Fumble Bot!')
+            .setDescription(`Welcome, ${user.username}!`)
             .setThumbnail(user.displayAvatarURL({ dynamic: true }))
             .addFields(
                 { name: 'Rank', value: 'Iron I', inline: true },
