@@ -1,6 +1,7 @@
 import { Client, Collection, Events, EmbedBuilder } from 'discord.js';
 import connectToDatabase from './database.js';
 import { readdirSync } from 'fs';
+import Tournament from './models/Tournament.js';
 import { schedule } from 'node-cron';
 import { config } from 'dotenv';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -42,9 +43,27 @@ client.once(Events.ClientReady, async (c) => {
     console.log('Global commands registered.');
 
     // Schedule daily summary task at 7 AM (UTC+2)
-    schedule('0 7 * * *', () => {
-        console.log('Sending daily summary...');
-        showdownService.sendDailySummary();
+    schedule('0 7 * * *', async () => {
+        console.log('Running daily cron job...');
+
+        try {
+            // Increment daysAlive for all tournaments
+            await Tournament.updateMany({}, { $inc: { daysAlive: 1 } });
+            console.log('Incremented daysAlive for all tournaments.');
+
+            // Delete tournaments older than 30 days
+            const deletionResult = await Tournament.deleteMany({ daysAlive: { $gte: 30 } });
+            if (deletionResult.deletedCount > 0) {
+                console.log(`Deleted ${deletionResult.deletedCount} old tournaments.`);
+            }
+
+            // Send daily summary
+            console.log('Sending daily summary...');
+            showdownService.sendDailySummary();
+
+        } catch (error) {
+            console.error('Error during daily cron job:', error);
+        }
     }, {
         timezone: 'Europe/Paris'
     });

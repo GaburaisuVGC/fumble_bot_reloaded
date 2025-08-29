@@ -5,6 +5,17 @@ const participantSchema = new Schema({
     discordTag: { type: String, required: true },
 }, { _id: false });
 
+const standingSchema = new Schema({
+    rank: { type: Number, required: true },
+    username: { type: String, required: true },
+    wins: { type: Number, required: true },
+    ties: { type: Number, required: true },
+    losses: { type: Number, required: true },
+    score: { type: Number, required: true },
+    owp: { type: Number, required: true },
+    oowp: { type: Number, required: true },
+}, { _id: false });
+
 const tournamentSchema = new Schema({
     tournamentId: {
         type: String,
@@ -44,6 +55,11 @@ const tournamentSchema = new Schema({
         enum: ['pending', 'active', 'finished', 'cancelled'],
         default: 'pending',
         required: true
+    },
+    standings: [standingSchema],
+    daysAlive: {
+        type: Number,
+        default: 0
     },
     participants: [participantSchema],
     config: {
