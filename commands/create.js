@@ -100,7 +100,7 @@ export async function execute(interaction) {
     const isAdmin = interaction.member.permissions.has(
       PermissionFlagsBits.Administrator
     );
-    const organizer = await isOrganizer(guildId, userId);
+    const organizer = await isOrganizer(serverId, userId);
     const botOwner = isBotOwner(userId);
 
     if (!isAdmin && !organizer && !botOwner) {
