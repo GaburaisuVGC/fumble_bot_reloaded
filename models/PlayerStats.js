@@ -37,6 +37,16 @@ const playerStatsSchema = new Schema({
     opponents: [{ // List of opponent UserIDs (Discord IDs)
         type: String
     }],
+    opponentsPhase1: [{
+        type: String
+    }],
+    opponentsPhase2: [{
+        type: String
+    }],
+    tiebreakersFrozen: {
+        type: Boolean,
+        default: false
+    },
     tiebreaker1_OWP: { // Opponent Win Percentage (calculated at end of Swiss/each round)
         type: Number,
         default: 0

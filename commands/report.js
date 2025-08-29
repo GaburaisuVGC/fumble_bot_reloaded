@@ -51,7 +51,7 @@ export async function execute(interaction) {
 
         // Create and send the embed
         const embed = new EmbedBuilder()
-            .setColor(result.isDraw ? '#FFFF00' : '#00FF00') // Yellow for Draw, Green for Win
+            .setColor(result.isDraw ? '#FFFF00' : '#00FF00')
             .setTitle('✅ Match Result Reported!')
             .setDescription(result.resultMessage)
             .addFields(

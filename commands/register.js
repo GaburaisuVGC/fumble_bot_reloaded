@@ -78,7 +78,7 @@ export async function execute(interaction) {
                 if (!userData) {
                     throw new Error('User information could not be retrieved. You probably have not played in gen9vgc2025reghbo3.');
                 }
-                server.registeredUsers.push({ username, elo: userData.elo, gxe: parseFloat(userData.gxe) });
+                server.registeredUsers.push({ username, elo: userData.elo, gxe: parseFloat(userData.gxe), discordId: interaction.user.id });
             } else {
                 // User is already registered
                 await interaction.reply(`Username **${username}** is already registered for this server.`);

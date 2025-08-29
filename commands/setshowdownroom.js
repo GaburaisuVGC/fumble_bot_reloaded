@@ -1,5 +1,5 @@
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
-import Server from '../models/Server.js';
+import { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
+import Server, { isOrganizer, isBotOwner } from '../models/Server.js';
 
 export const data = new SlashCommandBuilder()
     .setName('setshowdownroom')
@@ -7,11 +7,26 @@ export const data = new SlashCommandBuilder()
     .addChannelOption(option => option.setName('channel')
         .setDescription('The channel to set for automatic messages.')
         .setRequired(true));
+
 export async function execute(interaction) {
     const channel = interaction.options.getChannel('channel');
     const guildId = interaction.guildId;
+    const userId = interaction.user.id;
 
     try {
+        // Check if the user is either an admin or an organizer
+        const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+        const organizer = await isOrganizer(guildId, userId);
+        const botOwner = isBotOwner(userId);
+
+        if (!isAdmin && !organizer && !botOwner) {
+            await interaction.reply({
+                content: "🚫 You must be an **organizer**, **administrator** or **bot owner** to set the Showdown room.",
+                ephemeral: true
+            });
+            return;
+        }
+
         // Fetch the server document from the database
         let server = await Server.findOne({ discordId: guildId });
 
@@ -38,6 +53,9 @@ export async function execute(interaction) {
         await interaction.reply({ embeds: [embed] });
     } catch (error) {
         console.error('Error setting showdown room:', error);
-        await interaction.reply('There was an error setting the Showdown room. Please try again later.');
+        await interaction.reply({
+            content: 'There was an error setting the Showdown room. Please try again later.',
+            ephemeral: true
+        });
     }
 }

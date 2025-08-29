@@ -208,6 +208,7 @@ export default class ShowdownService extends IShowdownService {
                 // Update user's elo and gxe in the database
                 user.elo = currentElo;
                 user.gxe = parseFloat(currentGxe);
+
             }
 
             // Sort users by current ELO, then by GXE in case of a tie

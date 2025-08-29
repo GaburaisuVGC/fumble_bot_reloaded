@@ -1,5 +1,5 @@
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
-import Server from '../models/Server.js';
+import { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
+import Server, { isOrganizer, isBotOwner } from '../models/Server.js';
 
 export const data = new SlashCommandBuilder()
     .setName('unregister')
@@ -23,6 +23,18 @@ export async function execute(interaction) {
                 .setDescription(`The Showdown username **${username}** is not registered on this server.`);
 
             return await interaction.reply({ embeds: [errorEmbed] });
+        }
+
+        // Check permissions
+        const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+        const organizer = await isOrganizer(guildId, userId);
+        const botOwner = isBotOwner(userId);
+
+        if (userEntry.discordId !== userId && !isAdmin && !organizer && !botOwner) {
+            return interaction.reply({
+                content: "🚫 You cannot unregister someone else's Showdown account unless you are an organizer, admin, or bot owner.",
+                ephemeral: true
+            });
         }
 
         // Remove the user from the registeredUsers array

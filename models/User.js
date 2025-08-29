@@ -46,11 +46,11 @@ const userSchema = new Schema({
         type: Number,
         default: 1
     },
-    auraGainedTournaments: { // Total Aura (elo) gained from tournament prizes
+    auraGainedTournaments: {
         type: Number,
         default: 0
     },
-    auraSpentTournaments: { // Total Aura (elo) spent on tournament entry fees
+    auraSpentTournaments: {
         type: Number,
         default: 0
     },

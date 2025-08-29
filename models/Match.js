@@ -52,9 +52,6 @@ const matchSchema = new Schema({
         type: Boolean,
         default: false
     },
-    // Optional: if you want to store game scores like 2-1
-    // scoreP1: { type: Number },
-    // scoreP2: { type: Number },
 
     // Fields to store PlayerStats state before this match was reported, for round reset purposes
     player1StatsBeforeReport: {
@@ -62,8 +59,6 @@ const matchSchema = new Schema({
         losses: Number,
         draws: Number,
         score: Number,
-        // Potentially add OWP/OOWP if those are heavily affected and hard to recalculate,
-        // but for now, focusing on primary stats.
     },
     player2StatsBeforeReport: {
         wins: Number,

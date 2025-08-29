@@ -2,7 +2,7 @@ import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import Tournament from '../models/Tournament.js';
 import Match from '../models/Match.js';
 import PlayerStats from '../models/PlayerStats.js';
-import User from '../models/User.js'; // Still needed for some direct User operations and types
+import User from '../models/User.js';
 import { formatMatchId, shuffleArray } from '../utils/tournamentUtils.js';
 import { updateUserRankPeakLow, findOrCreateUser } from '../utils/userUtils.js';
 import mongoose from 'mongoose';
@@ -16,7 +16,7 @@ export const data = new SlashCommandBuilder()
             .setRequired(true));
 
 export async function execute(interaction) {
-    await interaction.deferReply({ ephemeral: false }); // Public response, potentially long
+    await interaction.deferReply({ ephemeral: false });
 
     const tournamentIdInput = interaction.options.getString('tournamentid').toUpperCase();
     const userId = interaction.user.id;
@@ -30,7 +30,7 @@ export async function execute(interaction) {
         await findOrCreateUser(userId, userTag, session);
 
         const tournament = await Tournament.findOne({ tournamentId: tournamentIdInput })
-            .populate('participants') // Assuming 'participants' field in Tournament has refs or basic info
+            .populate('participants')
             .session(session);
 
         if (!tournament) {
@@ -58,7 +58,6 @@ export async function execute(interaction) {
         const currentRoundMatches = await Match.find({
             tournament: tournament._id,
             roundNumber: tournament.currentRound,
-            // isTopCutRound: tournament.currentRoundType === 'topcut' // Differentiate if needed
         }).session(session);
 
         if (currentRoundMatches.length === 0 && tournament.currentRound > 0) {
@@ -83,7 +82,7 @@ export async function execute(interaction) {
         // Store the round number being validated *before* any potential increments
         const validatedRoundNumber = tournament.currentRound;
 
-        const allPlayerStatsForTournament = await PlayerStats.find({ tournament: tournament._id }).session(session);
+        let allPlayerStatsForTournament = await PlayerStats.find({ tournament: tournament._id }).session(session);
         let isTopCutPhase = tournament.config.topCutSize > 0 && tournament.currentRound > tournament.config.numSwissRounds;
 
         let nextRoundEmbed = new EmbedBuilder().setTimestamp();
@@ -91,7 +90,7 @@ export async function execute(interaction) {
 
         if (!isTopCutPhase) {
             // 1. Calculate Standings (only during Swiss rounds)
-            const currentStandings = await calculateStandings(tournament._id, allPlayerStatsForTournament, session);
+            let currentStandings = await calculateStandings(tournament._id, allPlayerStatsForTournament, session);
             // --- SWISS ROUNDS ---
             operationMessage = `Validating Swiss Round ${tournament.currentRound}.`;
             nextRoundEmbed.setTitle(`Swiss Round ${tournament.currentRound} Results & Next Round`);
@@ -100,6 +99,50 @@ export async function execute(interaction) {
                 .map((ps, index) => `${index + 1}. <@${ps.userId}>: (${ps.wins}-${ps.draws}-${ps.losses}) (${(ps.tiebreaker1_OWP*100).toFixed(1)}% | ${(ps.tiebreaker2_OOWP*100).toFixed(1)}% )`)
                 .join('\n');
             nextRoundEmbed.addFields({ name: `Current Standings (after Round ${tournament.currentRound})`, value: standingsDescription || 'No players.' });
+
+            // --- Two-Phase Swiss Transition Logic ---
+            if (tournament.config.isTwoPhase && tournament.currentRound === tournament.config.phase1Rounds) {
+                operationMessage += `\nEnd of Swiss Phase 1. Calculating cut to Phase 2.`;
+                const threshold = ((tournament.config.phase1Rounds - 3) * 3) + 1;
+                operationMessage += `\nPoint threshold to advance: ${threshold} points.`;
+
+                const playerUpdates = [];
+                let advancingPlayerCount = 0;
+                let droppedPlayerCount = 0;
+
+                for (const player of currentStandings) {
+                    if (player.score >= threshold) {
+                        advancingPlayerCount++;
+                        playerUpdates.push({
+                            updateOne: {
+                                filter: { _id: player._id },
+                                update: { $set: { receivedByeInRound: 0 } }
+                            }
+                        });
+                    } else {
+                        droppedPlayerCount++;
+                        playerUpdates.push({
+                            updateOne: {
+                                filter: { _id: player._id },
+                                update: { $set: { activeInTournament: false, tiebreakersFrozen: true } }
+                            }
+                        });
+                    }
+                }
+
+                if (playerUpdates.length > 0) {
+                    await PlayerStats.bulkWrite(playerUpdates, { session });
+                }
+
+                operationMessage += `\n${advancingPlayerCount} players have advanced to Phase 2.`;
+                if (droppedPlayerCount > 0) {
+                    operationMessage += `\n${droppedPlayerCount} players have been dropped.`;
+                }
+
+                // Refetch standings to get the active players for the next round
+                allPlayerStatsForTournament = await PlayerStats.find({ tournament: tournament._id }).session(session);
+                currentStandings = await calculateStandings(tournament._id, allPlayerStatsForTournament, session);
+            }
 
             if (tournament.currentRound < tournament.config.numSwissRounds) {
                 // Generate next Swiss round
@@ -360,8 +403,7 @@ export async function execute(interaction) {
                 const { displayTournamentLeaderboard } = await import('../commands/leaderboard.js');
                 if (interaction.client && tournament.serverId && interaction.channelId) {
                     console.log(`Attempting to display leaderboard for finished tournament ${tournament.tournamentId} on server ${tournament.serverId}`);
-                    // Get user IDs of those who were in *this* tournament.
-                    // tournament.participants is populated from the database and contains { userId, discordTag }
+
                     const finalParticipantsUserIds = tournament.participants.map(p => p.userId);
                     await displayTournamentLeaderboard(interaction.client, tournament.serverId, interaction.channelId, 'wins', finalParticipantsUserIds);
                 } else {
@@ -385,10 +427,6 @@ export async function execute(interaction) {
     }
 }
 
-// --- Helper function stubs to be filled in later ---
-
-// (calculateStandings, generateNextSwissRoundPairings, etc. will be here)
-
 /**
  * Calculates player standings, including tiebreakers OWP and OOWP.
  * This function MUTATES the playerStats objects by adding OWP and OOWP.
@@ -396,51 +434,62 @@ export async function execute(interaction) {
 async function calculateStandings(tournamentId, allPlayersStatsForTournament, session) {
     console.log(`Calculating standings for tournament ${tournamentId}`);
 
-    // Create a map for quick lookup of player stats by userId
     const playerStatsMap = new Map(allPlayersStatsForTournament.map(ps => [ps.userId, ps]));
 
-    // Calculate OWP (Opponent Win Percentage) for each player
+    // Calculate OWP (Opponent Win Percentage) for each player whose tiebreakers are not frozen.
     for (const playerStat of allPlayersStatsForTournament) {
-        let totalOpponentWinPercentage = 0;
-        let opponentsConsideredForOWP = 0;
+        if (playerStat.tiebreakersFrozen) continue;
 
-        for (const opponentId of playerStat.opponents) {
+        let totalOpponentWinPercentage = 0;
+        const uniqueOpponentIds = [...new Set(playerStat.opponents)];
+        if (uniqueOpponentIds.length === 0) {
+            playerStat.tiebreaker1_OWP = 0;
+            continue;
+        }
+
+        for (const opponentId of uniqueOpponentIds) {
             const opponentStat = playerStatsMap.get(opponentId);
             if (opponentStat) {
-                const opponentByes = opponentStat.receivedByeInRound > 0 ? 1 : 0;
-                const opponentActualWins = opponentStat.wins - opponentByes;
-                const opponentTotalMatchesIncludingByes = opponentStat.wins + opponentStat.losses + opponentStat.draws;
-                const opponentActualMatchesPlayed = opponentTotalMatchesIncludingByes - opponentByes;
-
-                let opponentWinPerc = 0; // Default to 0 if no actual matches played
-                if (opponentActualMatchesPlayed > 0) {
-                    const baseWinPerc = opponentActualWins / opponentActualMatchesPlayed;
-                    if (opponentStat.activeInTournament) {
-                        opponentWinPerc = Math.min(1.0, Math.max(0.25, baseWinPerc));
-                    } else {
-                        opponentWinPerc = Math.min(0.75, Math.max(0.25, baseWinPerc));
-                    }
+                const byes = opponentStat.receivedByeInRound > 0 ? 1 : 0;
+                const matchesPlayed = opponentStat.wins + opponentStat.losses + opponentStat.draws;
+                const actualMatches = matchesPlayed - byes;
+                let baseWinPerc = actualMatches > 0 ? (opponentStat.wins - byes + opponentStat.draws * 0.5) / actualMatches : 0;
+                
+                let finalWinPerc;
+                // Manually dropped players have their win % capped at 75%.
+                if (!opponentStat.activeInTournament && !opponentStat.tiebreakersFrozen) {
+                    finalWinPerc = Math.min(baseWinPerc, 0.75);
+                } else {
+                    // Active players or players dropped from phase 1 are capped at 100%.
+                    finalWinPerc = Math.min(baseWinPerc, 1.0);
                 }
-                totalOpponentWinPercentage += opponentWinPerc;
-                opponentsConsideredForOWP++;
+                
+                // All opponents have a minimum of 25% for OWP calculation.
+                totalOpponentWinPercentage += Math.max(0.25, finalWinPerc);
             }
         }
-        playerStat.tiebreaker1_OWP = opponentsConsideredForOWP > 0 ? totalOpponentWinPercentage / opponentsConsideredForOWP : 0;
+        playerStat.tiebreaker1_OWP = totalOpponentWinPercentage / uniqueOpponentIds.length;
     }
 
-    // Calculate OOWP (Opponent's Opponent Win Percentage)
+    // Calculate OOWP (Opponent's Opponent Win Percentage) for each player whose tiebreakers are not frozen.
     for (const playerStat of allPlayersStatsForTournament) {
-        let totalOpponentsOWP = 0;
-        let opponentsConsideredForOOWP = 0;
+        if (playerStat.tiebreakersFrozen) continue;
 
-        for (const opponentId of playerStat.opponents) {
+        let totalOpponentsOWP = 0;
+        const uniqueOpponentIds = [...new Set(playerStat.opponents)];
+        if (uniqueOpponentIds.length === 0) {
+            playerStat.tiebreaker2_OOWP = 0;
+            continue;
+        }
+        
+        for (const opponentId of uniqueOpponentIds) {
             const opponentStat = playerStatsMap.get(opponentId);
             if (opponentStat) {
+                // Here we use the tiebreaker1_OWP that we just calculated for all players.
                 totalOpponentsOWP += opponentStat.tiebreaker1_OWP;
-                opponentsConsideredForOOWP++;
             }
         }
-        playerStat.tiebreaker2_OOWP = opponentsConsideredForOOWP > 0 ? totalOpponentsOWP / opponentsConsideredForOOWP : 0;
+        playerStat.tiebreaker2_OOWP = totalOpponentsOWP / uniqueOpponentIds.length;
     }
 
     // Fetch all matches for the tournament to use in head-to-head tiebreaker
@@ -448,6 +497,10 @@ async function calculateStandings(tournamentId, allPlayersStatsForTournament, se
 
     // Initial sort by primary criteria
     allPlayersStatsForTournament.sort((a, b) => {
+        const aMatches = a.wins + a.losses + a.draws;
+        const bMatches = b.wins + b.losses + b.draws;
+        if (aMatches !== bMatches) return bMatches - aMatches; // More matches played is better
+
         if (b.score !== a.score) return b.score - a.score;
         if (b.tiebreaker1_OWP !== a.tiebreaker1_OWP) return b.tiebreaker1_OWP - a.tiebreaker1_OWP;
         return b.tiebreaker2_OOWP - a.tiebreaker2_OOWP;
@@ -475,19 +528,25 @@ async function calculateStandings(tournamentId, allPlayersStatsForTournament, se
             );
 
             tiedPlayers.sort((a, b) => {
-                let aHeadToHeadScore = 0;
-                let bHeadToHeadScore = 0;
+                const matchesBetweenPair = headToHeadMatches.filter(
+                    m => (m.player1.userId === a.userId && m.player2.userId === b.userId) || (m.player1.userId === b.userId && m.player2.userId === a.userId)
+                );
 
-                for (const match of headToHeadMatches) {
-                    if (match.winnerId === a.userId && (match.player1.userId === b.userId || match.player2.userId === b.userId)) aHeadToHeadScore++;
-                    if (match.winnerId === b.userId && (match.player1.userId === a.userId || match.player2.userId === a.userId)) bHeadToHeadScore++;
+                if (matchesBetweenPair.length > 0) {
+                    let aWins = 0;
+                    let bWins = 0;
+                    for (const match of matchesBetweenPair) {
+                        if (match.winnerId === a.userId) aWins++;
+                        if (match.winnerId === b.userId) bWins++;
+                    }
+
+                    // If score is 2-0 or 1-0, the winner is placed above.
+                    if (aWins !== bWins) {
+                        return bWins - aWins; // Higher score comes first
+                    }
                 }
-
-                if (bHeadToHeadScore !== aHeadToHeadScore) {
-                    return bHeadToHeadScore - aHeadToHeadScore;
-                }
-
-                // If head-to-head is tied (or no matches played), use random tiebreaker
+                
+                // If 1-1, or no matches played between them, fallback to random.
                 return Math.random() - 0.5;
             });
 
@@ -523,7 +582,7 @@ async function generateNextSwissRoundPairings(
       `Generating Swiss round ${currentRoundNumber} for ${tournament.tournamentId}`
     );
     const pairingsDescriptionList = [];
-    const newMatchesInput = []; // Store data for new Match documents
+    const newMatchesInput = [];
     let matchCounter = await Match.countDocuments({
       tournament: tournament._id,
     }).session(session);
@@ -566,7 +625,7 @@ async function generateNextSwissRoundPairings(
     }
 
     // 2. Create Swiss pairings using backtracking algorithm
-    const pairings = findSwissPairings(availablePlayers);
+    const pairings = findSwissPairings(availablePlayers, tournament);
 
     if (!pairings) {
       console.error(
@@ -634,7 +693,7 @@ async function generateNextSwissRoundPairings(
         (mInput) => new Match(mInput)
       );
       await Match.insertMany(matchModelsToSave, { session });
-      createdMatchModels.push(...matchModelsToSave); // these now have _ids from DB
+      createdMatchModels.push(...matchModelsToSave);
 
       const playerStatsUpdatePromises = [];
       for (const match of createdMatchModels) {
@@ -650,7 +709,7 @@ async function generateNextSwissRoundPairings(
           const p1Ops = { $push: { matchesPlayed: match._id } };
           if (match.player2) {
             // If it's not a BYE for p1
-            p1Ops.$addToSet = { opponents: match.player2.userId }; // $addToSet to avoid duplicate opponent entries over tournament
+            p1Ops.$addToSet = { opponents: match.player2.userId };
           }
           playerStatsUpdatePromises.push(
             PlayerStats.updateOne({ _id: p1Stat._id }, p1Ops).session(session)
@@ -701,7 +760,7 @@ async function generateNextSwissRoundPairings(
   }
 
   // Swiss pairing algorithm with backtracking
-  function findSwissPairings(players) {
+  function findSwissPairings(players, tournament) {
     if (players.length % 2 !== 0) {
       console.error("findSwissPairings called with odd number of players");
       return null;
@@ -733,7 +792,7 @@ async function generateNextSwissRoundPairings(
     );
 
     // Try to find valid pairings using backtracking
-    const result = backtrackPairings(orderedPlayers, [], new Set());
+    const result = backtrackPairings(orderedPlayers, [], new Set(), tournament);
 
     if (result) {
       console.log(`Found valid pairing solution with ${result.length} matches`);
@@ -744,7 +803,7 @@ async function generateNextSwissRoundPairings(
     }
   }
 
-function backtrackPairings(remainingPlayers, currentPairings, pairedPlayerIds) {
+function backtrackPairings(remainingPlayers, currentPairings, pairedPlayerIds, tournament) {
     // Base case: all players are paired
     if (remainingPlayers.length === 0) {
       return currentPairings;
@@ -762,8 +821,19 @@ function backtrackPairings(remainingPlayers, currentPairings, pairedPlayerIds) {
     for (let i = 1; i < remainingPlayers.length; i++) {
       const player2 = remainingPlayers[i];
 
-      // Check if this pairing is valid (haven't played before)
-      if (!player1.opponents.includes(player2.userId)) {
+      // Check if this pairing is valid (haven't played before in the same phase)
+      let opponentsInCurrentPhase;
+      if (tournament.config.isTwoPhase) {
+          if (tournament.currentRound > tournament.config.phase1Rounds) {
+              opponentsInCurrentPhase = player1.opponentsPhase2 || [];
+          } else {
+              opponentsInCurrentPhase = player1.opponentsPhase1 || [];
+          }
+      } else {
+          opponentsInCurrentPhase = player1.opponents || [];
+      }
+
+      if (!opponentsInCurrentPhase.includes(player2.userId)) {
         // Create this pairing
         const newPairing = { player1, player2 };
         const newCurrentPairings = [...currentPairings, newPairing];
@@ -782,7 +852,8 @@ function backtrackPairings(remainingPlayers, currentPairings, pairedPlayerIds) {
         const result = backtrackPairings(
           newRemainingPlayers,
           newCurrentPairings,
-          newPairedPlayerIds
+          newPairedPlayerIds,
+          tournament
         );
 
         if (result !== null) {
@@ -843,7 +914,7 @@ function generateBracket(bracketSize) {
         for (let i = 0; i < currentRoundMatchups.length; i++) {
             let matchId = `${roundName.split(' ')[0]}-${i + 1}`;
             if (roundName === 'Finals') {
-                matchId = 'Final'; // Correctly label the final match
+                matchId = 'Final';
             }
             matches.push({
                 matchId: matchId,
@@ -993,12 +1064,12 @@ async function generateTopCutPairings(tournament, players, topCutRoundNumber, se
     return { pairingsDescriptionList, newMatchesInfo: newMatchesInput };
 }
 
-// Define prize proportions - these can be adjusted
 const PRIZE_PROPORTIONS = {
-    top4_no_cut: { 1: 0.50, 2: 0.25, 3: 0.125, 4: 0.125 }, // For tournaments with no top cut but spread prizes
-    top4_cut:    { 1: 0.50, 2: 0.25, 3: 0.125, 4: 0.125 }, // Standard Top 4
-    top8_cut:    { 1: 0.40, 2: 0.20, '3-4': 0.10, '5-8': 0.05 }, // Example for Top 8
-    top16_cut:   { 1: 0.35, 2: 0.18, '3-4': 0.085, '5-8': 0.04, '9-16': 0.02 } // Example for Top 16
+    top4_no_cut: { 1: 0.50, 2: 0.25, 3: 0.125, 4: 0.125 },
+    top4_cut:    { 1: 0.50, 2: 0.25, 3: 0.125, 4: 0.125 },
+    top8_cut:    { 1: 0.40, 2: 0.20, '3-4': 0.10, '5-8': 0.05 },
+    top16_cut:   { 1: 0.35, 2: 0.18, '3-4': 0.085, '5-8': 0.04, '9-16': 0.02 },
+    top32_cut:   { 1: 0.30, 2: 0.15, '3-4': 0.075, '5-8': 0.03, '9-16': 0.015, '17-32': 0.0075 } 
 };
 
 function chunkArray(arr, size) {
@@ -1052,7 +1123,8 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
             }
 
             let proportionsKey;
-            if (prizeBracket >= 16) proportionsKey = 'top16_cut';
+            if (prizeBracket >= 32) proportionsKey = 'top32_cut';
+            else if (prizeBracket >= 16) proportionsKey = 'top16_cut';
             else if (prizeBracket >= 8) proportionsKey = 'top8_cut';
             else if (prizeBracket >= 4) proportionsKey = 'top4_cut';
             else proportionsKey = 'top4_no_cut';
@@ -1236,7 +1308,7 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
 
     // 3. Announce Final Results
     const finalStandingsEmbed = new EmbedBuilder()
-        .setColor('#FFD700') // Gold for finished
+        .setColor('#FFD700')
         .setTitle(`🏆 Tournament Finished: ${tournament.title} 🏆`)
         .setDescription(`The tournament has concluded!`)
         .addFields({ name: 'Prize Distribution', value: prizeDistributionMessages.join('\n') || 'No prizes.' });
@@ -1261,7 +1333,7 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
 
     // Delete all matches and playerStats for this tournament (in transaction)
     try {
-        const tournamentObjectId = tournament._id; // Use the actual ObjectId
+        const tournamentObjectId = tournament._id;
 
         const matchDeletionResult = await Match.deleteMany({ tournament: tournamentObjectId }).session(session);
         console.log(`Deleted ${matchDeletionResult.deletedCount} matches for tournament ${tournament.tournamentId}`);
@@ -1271,6 +1343,5 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
 
     } catch (deleteError) {
         console.error(`Error deleting matches/playerStats for tournament ${tournament.tournamentId}:`, deleteError);
-        // Decide policy: we log and continue because tournament is finished and prize awarded.
     }
 }

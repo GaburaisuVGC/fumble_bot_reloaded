@@ -11,7 +11,7 @@ export const data = new SlashCommandBuilder()
             .setRequired(true))
     .addUserOption(option =>
         option.setName('user')
-            .setDescription('The user to unjoin from the tournament (organizer only).')
+            .setDescription('The user to remove from the tournament (organizer only).')
             .setRequired(false));
 
 export async function execute(interaction) {
@@ -53,8 +53,8 @@ export async function execute(interaction) {
             `User <@${targetUserId}> has been unjoined from tournament **${result.tournament.tournamentId}** by <@${organizerExecutingId}>.`;
 
         const embed = new EmbedBuilder()
-            .setColor('#FFA500') // Orange
-            .setTitle('↩️ Successfully Left/Unjoined Tournament')
+            .setColor('#FFA500')
+            .setTitle('↩️ Successfully Left Tournament')
             .setDescription(unjoinMessage)
             .addFields(
                 { name: 'Tournament ID', value: `\`${result.tournament.tournamentId}\`` },
@@ -66,9 +66,9 @@ export async function execute(interaction) {
         await interaction.editReply({ embeds: [embed] });
 
     } catch (error) {
-        console.error(`Error unjoining tournament ${tournamentId}:`, error);
+        console.error(`Error leaving tournament ${tournamentId}:`, error);
         await interaction.editReply({ 
-            content: `Error: ${error.message || 'There was an error unjoining from the tournament. Please try again later.'}` 
+            content: `Error: ${error.message || 'There was an error leaving the tournament. Please try again later.'}` 
         });
     }
 }

@@ -1,6 +1,11 @@
-import { SlashCommandBuilder, EmbedBuilder } from "discord.js";
+import {
+  SlashCommandBuilder,
+  EmbedBuilder,
+  PermissionFlagsBits,
+} from "discord.js";
 import TournamentService from "../services/tournament/TournamentService.js";
 import UserService from "../services/user/UserService.js";
+import { isOrganizer, isBotOwner } from "../models/Server.js";
 
 export const data = new SlashCommandBuilder()
   .setName("createtour")
@@ -21,7 +26,10 @@ export const data = new SlashCommandBuilder()
       .setRequired(true)
       .addChoices(
         { name: "Winner Takes All", value: "all" },
-        { name: "Spread Proportionally (Top Cut or Top 4)", value: "spread" }
+        {
+          name: "Spread Proportionally (from Top 4 (global) to Top 32 (Top Cut only))",
+          value: "spread",
+        }
       )
   )
   .addStringOption((option) =>
@@ -41,7 +49,7 @@ export const data = new SlashCommandBuilder()
     option
       .setName("pointsrequired")
       .setDescription(
-        "Optional: Manually set points required for a point-based cut."
+        "Optional: Manually set points required for a point-based cut (not for Day 2)."
       )
       .setRequired(false)
       .setMinValue(1)
@@ -85,6 +93,22 @@ export async function execute(interaction) {
       await interaction.editReply(
         "You need to be registered with the bot to create a tournament. Use `/init` if you haven't already."
       );
+      return;
+    }
+
+    // Check if the user is either an admin or an organizer
+    const isAdmin = interaction.member.permissions.has(
+      PermissionFlagsBits.Administrator
+    );
+    const organizer = await isOrganizer(serverId, organizerId);
+    const botOwner = isBotOwner(organizerId);
+
+    if (!isAdmin && !organizer && !botOwner) {
+      await interaction.reply({
+        content:
+          "🚫 You must be an **organizer** or **administrator** or **bot owner** to use this command.",
+        ephemeral: true,
+      });
       return;
     }
 
@@ -145,7 +169,7 @@ export async function execute(interaction) {
       .setTimestamp();
 
     // Send the reply to the channel where the command was used
-    await interaction.followUp({ embeds: [embed], ephemeral: false }); // Not ephemeral so everyone can see
+    await interaction.followUp({ embeds: [embed], ephemeral: false });
   } catch (error) {
     console.error("Error creating tournament:", error);
     await interaction.editReply({

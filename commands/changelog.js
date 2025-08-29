@@ -22,17 +22,18 @@ export async function execute(interaction) {
     //     .setTitle('Changelog - Format update')
     //     .setDescription(
     //         "The new default format is **Reg I Bo3 (VGC 2025)**.\n\n" +
-    //         "Please **register votre Showdown username again** to get daily tracking."
+    //         "Please **register your Showdown username again** to get daily tracking."
     //     )
     //     .setTimestamp();
     const infoEmbed = new EmbedBuilder()
         .setColor('#0099ff')
-        .setTitle('CHANGELOG - Complete Refactoring')
+        .setTitle('CHANGELOG - Tournament System finished & Security Checks')
         .setDescription(
-            "The bot has been completely refactord from scratch with a full English translation to make it public in the future.\n\n" +
-            "Some features are still in testing and might not work as intended.\n\n" +
-            "Other new features will be added soon.\n\n" +
-            "Reset: The AURA gained from fumbles, clutches and tournaments has been reset to 1000 (Iron I) for everyone.\n\n"
+            "The tournament system is now fully functional and can be used to create and manage tournaments directly from Discord.\n\n" +
+            "Day 2 and asymmetrical top cut are part of the new features.\n\n" +
+            "Organization commands for tournaments and ELO tracking are now restricted to server organizers (set with /setorganizer by an admin of the server).\n\n" +  
+            "Registering a Showdown username will link it to your Discord account in order to make other users unable to unregister your username.\n\n" +
+            "An elo update based on the showdown username evolution will be considered for future updates.\n\n"
         )
         .setTimestamp();
 
