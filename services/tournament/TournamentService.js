@@ -118,18 +118,20 @@ export default class TournamentService extends ITournamentService {
    * @param {string} description - The description of the tournament.
    * @param {string} cutType - The type of top cut ('rank' or 'points').
    * @param {number|null} pointsRequired - The points required for a point-based cut, if manually provided.
+   * @param {number|null} maxPlayers - The maximum number of players allowed to join.
    * @returns {Promise<Object>} The created tournament.
    */
-  async createTournament(serverId, organizerId, auraCost, prizeMode, title, description, cutType, pointsRequired) {
+  async createTournament(serverId, organizerId, auraCost, prizeMode, title, description, cutType, pointsRequired, maxPlayers) {
     const tournamentId = generateTournamentId();
     const newTournament = new Tournament({
       tournamentId,
       serverId,
       organizerId,
-      title,
+      title: title || "Untitled Tournament",
       description,
       auraCost,
       prizeMode,
+      maxPlayers: maxPlayers || 0,
       status: "pending",
       participants: [],
       config: {
@@ -167,6 +169,16 @@ export default class TournamentService extends ITournamentService {
       if (tournament.status !== "pending") {
         throw new Error(
           `Tournament is not in a joinable state. Current status: ${tournament.status}`
+        );
+      }
+
+      // Check if the tournament is full
+      if (
+        tournament.maxPlayers > 0 &&
+        tournament.participants.length >= tournament.maxPlayers
+      ) {
+        throw new Error(
+          `Tournament is full. The maximum number of players (${tournament.maxPlayers}) has been reached.`
         );
       }
 
@@ -1150,18 +1162,24 @@ export default class TournamentService extends ITournamentService {
                 : `Point-based (${tournament.config.pointsRequired} pts)`,
             inline: true,
           },
-          { name: "Participants", value: `${participantCount}`, inline: true },
-          {
-            name: "Pairings",
-            value:
-              pairingsDescriptionList.join("\n") ||
-              "No pairings generated (error).",
-          }
+          { name: "Participants", value: `${participantCount}`, inline: true }
         )
         .setFooter({
           text: `Tournament ID: ${tournament.tournamentId} | Use /matchreport to submit results. Organizer: ${organizerTag}`,
         })
         .setTimestamp();
+
+      embed.addFields({
+        name: "Pairings",
+        value: `[View Pairings on Website](${process.env.WEBSITE_URL}/pairings/${tournament.tournamentId}/)`,
+      });
+
+      if (participantCount <= 32) {
+        embed.addFields({
+            name: "Round 1 Pairings",
+            value: pairingsDescriptionList.join('\n') || 'No pairings generated.'
+        });
+      }
 
       if (tournament.config.isTwoPhase) {
         const pointsToPass = Math.ceil(tournament.config.phase1Rounds / 2) * 3 + 1;
@@ -1687,7 +1705,7 @@ export default class TournamentService extends ITournamentService {
       console.log(`Fetching global leaderboard with base activity filter.`);
     }
 
-    let users = await User.find(userFilter);
+    let users = await User.find(userFilter).limit(100);
 
     // Add new stats to the leaderboard display if desired. For now, keeping existing fields.
     // The sorting logic below already uses tournamentWins and auraDelta.

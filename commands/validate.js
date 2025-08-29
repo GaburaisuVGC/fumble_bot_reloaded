@@ -95,10 +95,13 @@ export async function execute(interaction) {
             operationMessage = `Validating Swiss Round ${tournament.currentRound}.`;
             nextRoundEmbed.setTitle(`Swiss Round ${tournament.currentRound} Results & Next Round`);
 
-            const standingsDescription = currentStandings
-                .map((ps, index) => `${index + 1}. <@${ps.userId}>: (${ps.wins}-${ps.draws}-${ps.losses}) (${(ps.tiebreaker1_OWP*100).toFixed(1)}% | ${(ps.tiebreaker2_OOWP*100).toFixed(1)}% )`)
-                .join('\n');
-            nextRoundEmbed.addFields({ name: `Current Standings (after Round ${tournament.currentRound})`, value: standingsDescription || 'No players.' });
+            nextRoundEmbed.addFields({ name: `Online Standings`, value: `[View Standings on Website](${process.env.WEBSITE_URL}/standings/${tournament.tournamentId})` });
+            if (tournament.participants.length <= 32) {
+                const standingsDescription = currentStandings
+                    .map((ps, index) => `${index + 1}. <@${ps.userId}>: (${ps.wins}-${ps.draws}-${ps.losses}) (${(ps.tiebreaker1_OWP*100).toFixed(1)}% | ${(ps.tiebreaker2_OOWP*100).toFixed(1)}% )`)
+                    .join('\n');
+                nextRoundEmbed.addFields({ name: `Current Standings (after Round ${tournament.currentRound})`, value: standingsDescription || 'No players.' });
+            }
 
             // --- Two-Phase Swiss Transition Logic ---
             if (tournament.config.isTwoPhase && tournament.currentRound === tournament.config.phase1Rounds) {
@@ -149,7 +152,10 @@ export async function execute(interaction) {
                 tournament.currentRound += 1;
                 const { pairingsDescriptionList, newMatchesInfo } = await generateNextSwissRoundPairings(tournament, currentStandings, tournament.currentRound, session);
                 if (newMatchesInfo.length > 0) {
-                    nextRoundEmbed.addFields({ name: `Swiss Round ${tournament.currentRound} Pairings`, value: pairingsDescriptionList.join('\n') });
+                    nextRoundEmbed.addFields({ name: `Online Pairings`, value: `[View Pairings on Website](${process.env.WEBSITE_URL}/pairings/${tournament.tournamentId})` });
+                    if (tournament.participants.length <= 32) {
+                        nextRoundEmbed.addFields({ name: `Swiss Round ${tournament.currentRound} Pairings`, value: pairingsDescriptionList.join('\n') });
+                    }
                     operationMessage += `\nGenerated pairings for Swiss Round ${tournament.currentRound}.`;
                 } else {
                     nextRoundEmbed.addFields({ name: `Swiss Round ${tournament.currentRound} Pairings`, value: "Could not generate pairings (e.g., all remaining are rematches or error)." });
@@ -1325,10 +1331,11 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
     const finalStandingsEmbed = new EmbedBuilder()
         .setColor('#FFD700')
         .setTitle(`🏆 Tournament Finished: ${tournament.title} 🏆`)
-        .setDescription(`The tournament has concluded!`)
+        .setDescription(`The tournament has concluded! View the full standings [here](${process.env.WEBSITE_URL}/standings/${tournament.tournamentId}).`)
         .addFields({ name: 'Prize Distribution', value: prizeDistributionMessages.join('\n') || 'No prizes.' });
 
-    let standingsText = allPlayerStatsFromTournament
+    const top32Standings = allPlayerStatsFromTournament.slice(0, 8);
+    let standingsText = top32Standings
         .map(ps => {
             if (ps.initialSeed > 0) { // Top Cut Player
                 return `${ps.finalRank}- <@${ps.userId}> (${ps.wins}-${ps.draws}-${ps.losses})`;
@@ -1337,6 +1344,10 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
             }
         })
         .join('\n');
+    
+    if (allPlayerStatsFromTournament.length > 8) {
+        standingsText += `\n...and ${allPlayerStatsFromTournament.length - 8} more.`
+    }
 
     finalStandingsEmbed.addFields({ name: 'Final Standings', value: standingsText || 'No standings available.' });
 

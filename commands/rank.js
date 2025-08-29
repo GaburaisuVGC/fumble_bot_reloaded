@@ -26,6 +26,7 @@ export async function execute(interaction) {
     const embed = new EmbedBuilder()
         .setColor("#0099ff")
         .setTitle(`Stats for ${targetUser.username}`)
+        .setURL(`${process.env.WEBSITE_URL}/player/${targetUser.id}`)
         .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }))
         .addFields(
             { name: "AURA", value: user.elo.toString() },

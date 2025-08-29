@@ -65,6 +65,15 @@ export const data = new SlashCommandBuilder()
       .setName("description")
       .setDescription("A description for the tournament.")
       .setRequired(false)
+  )
+  .addIntegerOption((option) =>
+    option
+      .setName("maxplayers")
+      .setDescription(
+        "The maximum number of players that can join. (Default: 0 for no limit)"
+      )
+      .setRequired(false)
+      .setMinValue(0)
   );
 
 export async function execute(interaction) {
@@ -78,6 +87,7 @@ export async function execute(interaction) {
   const description = interaction.options.getString("description");
   const cutType = interaction.options.getString("cuttype");
   const pointsRequired = interaction.options.getInteger("pointsrequired");
+  const maxPlayers = interaction.options.getInteger("maxplayers");
 
   // Initialize services
   const userService = new UserService();
@@ -121,7 +131,8 @@ export async function execute(interaction) {
       title,
       description,
       cutType,
-      pointsRequired
+      pointsRequired,
+      maxPlayers
     );
 
     // Create success embed
@@ -142,6 +153,11 @@ export async function execute(interaction) {
         {
           name: "Aura Cost to Join",
           value: `💰 ${auraCost} Aura`,
+          inline: true,
+        },
+        {
+          name: "Max Players",
+          value: maxPlayers > 0 ? ` capped at ${maxPlayers}` : "no limit",
           inline: true,
         },
         {

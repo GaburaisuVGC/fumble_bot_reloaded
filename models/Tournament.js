@@ -50,6 +50,10 @@ const tournamentSchema = new Schema({
         enum: ['all', 'spread'],
         required: true
     },
+    maxPlayers: {
+        type: Number,
+        default: 0
+    },
     status: {
         type: String,
         enum: ['pending', 'active', 'finished', 'cancelled'],

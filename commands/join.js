@@ -48,7 +48,7 @@ export async function execute(interaction) {
 
         // Create success embed
         const embed = new EmbedBuilder()
-            .setColor('#00FF00') 
+            .setColor('#00FF00')
             .setTitle('✅ Successfully Joined Tournament!')
             .setDescription(
                 targetUserId === organizerExecutingId
@@ -56,7 +56,9 @@ export async function execute(interaction) {
                     : `User <@${targetUserId}> has been successfully joined to the tournament: **${result.tournament.tournamentId}** by <@${organizerExecutingId}>.`
             )
             .addFields(
-                { name: 'Tournament ID', value: `\`${result.tournament.tournamentId}\`` },
+                { name: 'Tournament ID', value: `\`${result.tournament.tournamentId}\``, inline: true },
+                { name: 'Total Players', value: `${result.tournament.participants.length}`, inline: true },
+                { name: 'Player Profile (for Pairings)', value: `[View Profile](${process.env.WEBSITE_URL}/player/${targetUserId})`, inline: true },
                 { name: 'Aura Cost Paid (by user)', value: `💰 ${result.tournament.auraCost} Aura` },
                 { name: 'User\'s Remaining Aura', value: `🌟 ${result.user.elo} Aura` }
             );

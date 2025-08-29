@@ -47,7 +47,16 @@ export async function updateUserRankPeakLow(userDoc, newEloValue, session = null
 export async function findOrCreateUser(discordId, discordTag, session = null) {
     let user = await User.findOne({ discordId }).session(session);
 
-    if (!user) {
+    if (user) {
+        // User found, check for username update.
+        const newUsername = discordTag.includes('#') ? discordTag.substring(0, discordTag.lastIndexOf('#')) : discordTag;
+        if (discordTag && user.username !== newUsername) {
+            console.log(`Updating username for ${discordId}: from '${user.username}' to '${newUsername}'`);
+            user.username = newUsername;
+            await user.save({ session });
+        }
+    } else {
+        // User not found, create a new one.
         console.log(`User ${discordId} (${discordTag}) not found. Creating new user.`);
         user = new User({
             discordId: discordId,
