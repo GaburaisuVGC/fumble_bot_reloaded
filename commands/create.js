@@ -100,8 +100,8 @@ export async function execute(interaction) {
     const isAdmin = interaction.member.permissions.has(
       PermissionFlagsBits.Administrator
     );
-    const organizer = await isOrganizer(serverId, userId);
-    const botOwner = isBotOwner(userId);
+    const organizer = await isOrganizer(serverId, organizerId);
+    const botOwner = isBotOwner(organizerId);
 
     if (!isAdmin && !organizer && !botOwner) {
       await interaction.reply({
