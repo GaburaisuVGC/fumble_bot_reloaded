@@ -1086,6 +1086,21 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
     }
 
     tournament.status = 'finished';
+
+    allPlayerStatsFromTournament.sort((a, b) => a.finalRank - b.finalRank);
+
+    const finalStandings = allPlayerStatsFromTournament.map(ps => ({
+        rank: ps.finalRank,
+        username: ps.discordTag,
+        wins: ps.wins,
+        ties: ps.draws,
+        losses: ps.losses,
+        score: ps.score,
+        owp: ps.tiebreaker1_OWP,
+        oowp: ps.tiebreaker2_OOWP,
+    }));
+
+    tournament.standings = finalStandings;
     
     allPlayerStatsFromTournament.forEach((ps, index) => {
         if (!ps.finalRank) ps.finalRank = index + 1;
