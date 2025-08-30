@@ -2,6 +2,7 @@ import { Client, Collection, Events, EmbedBuilder } from 'discord.js';
 import connectToDatabase from './database.js';
 import { readdirSync } from 'fs';
 import Tournament from './models/Tournament.js';
+import User from './models/User.js';
 import { schedule } from 'node-cron';
 import { config } from 'dotenv';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -56,6 +57,10 @@ client.once(Events.ClientReady, async (c) => {
             if (deletionResult.deletedCount > 0) {
                 console.log(`Deleted ${deletionResult.deletedCount} old tournaments.`);
             }
+
+            // Reset canReceiveAura for all users
+            await User.updateMany({}, { $set: { canReceiveAura: true } });
+            console.log('Reset canReceiveAura for all users.');
 
             // Send daily summary
             console.log('Sending daily summary...');

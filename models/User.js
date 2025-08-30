@@ -72,7 +72,11 @@ const userSchema = new Schema({
     },
     playedOnServers: [{ // Array of server IDs the user has played on
         type: String
-    }]
+    }],
+    canReceiveAura: { // Can the user receive an aura give
+        type: Boolean,
+        default: true
+    }
 });
 
 // Index for playedOnServers to speed up leaderboard queries for a specific server

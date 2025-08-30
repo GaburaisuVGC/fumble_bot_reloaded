@@ -1124,10 +1124,14 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
         if (tournament.prizeMode === 'all') {
             const winnerStat = allPlayerStatsFromTournament.find(p => p.finalRank === 1);
             if (winnerStat) {
-                prizeDistributionMessages.push(`Winner <@${winnerStat.userId}> receives ${totalPrizePool} Aura!`);
-                userEloIncreases.set(winnerStat.userId, (userEloIncreases.get(winnerStat.userId) || 0) + totalPrizePool);
+                // the comboMultiplier is found from the user model
+                const user = await User.findOne({ discord: winnerStat.userId }).session(session);
+                const comboMultiplier = user.comboMultiplier;
+                const finalPrizePool = Math.floor(totalPrizePool * comboMultiplier);
+                prizeDistributionMessages.push(`Winner <@${winnerStat.userId}> receives ${finalPrizePool} Aura!`);
+                userEloIncreases.set(winnerStat.userId, (userEloIncreases.get(winnerStat.userId) || 0) + finalPrizePool);
                 const cur = userAggregatedUpdates.get(winnerStat.userId) || { inc: {}, addServer: false };
-                cur.inc.auraGainedTournaments = (cur.inc.auraGainedTournaments || 0) + totalPrizePool;
+                cur.inc.auraGainedTournaments = (cur.inc.auraGainedTournaments || 0) + finalPrizePool;
                 cur.inc.tournamentWins = (cur.inc.tournamentWins || 0) + 1;
                 userAggregatedUpdates.set(winnerStat.userId, cur);
             }
@@ -1195,7 +1199,17 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
             }
 
             for (const award of pendingPrizeAwards) {
-                prizeDistributionMessages.push(`<@${award.userId}> (Rank ${award.finalRank}) receives ${award.amount} Aura.`);
+                
+                // Find user from usedId to get comboMultiplier
+                const user = await User.findOne({ discordId: award.userId }).session(session);
+                const comboMultiplier = user ? user.comboMultiplier : 1;
+                award.amount = Math.floor(award.amount * comboMultiplier);
+
+                // only show the winner message
+                if (award.finalRank === 1) {
+                prizeDistributionMessages.push(`<@${award.userId}> wins and receives ${award.amount} Aura.`);
+                prizeDistributionMessages.push(`Other prizes have been distributed, check your profile!`);
+                }
                 userEloIncreases.set(award.userId, (userEloIncreases.get(award.userId) || 0) + award.amount);
                 const cur = userAggregatedUpdates.get(award.userId) || { inc: {}, addServer: false };
                 cur.inc.auraGainedTournaments = (cur.inc.auraGainedTournaments || 0) + award.amount;
@@ -1219,7 +1233,7 @@ async function finishTournament(interaction, tournament, allPlayerStatsFromTourn
         userAggregatedUpdates.set(playerStat.userId, cur);
     }
 
-    // Prepare list of all users that need to exist (for Elo updates or updates)
+    // Prepare list of all users that need to exist (for Elo updates)
     const allUserIdsToProcess = new Set([...userAggregatedUpdates.keys(), ...userEloIncreases.keys()]);
     // Also ensure winner exists even if not in maps
     const winnerStat = allPlayerStatsFromTournament.find(p => p.finalRank === 1);

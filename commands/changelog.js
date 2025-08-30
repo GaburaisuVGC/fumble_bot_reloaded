@@ -27,13 +27,13 @@ export async function execute(interaction) {
     //     .setTimestamp();
     const infoEmbed = new EmbedBuilder()
         .setColor('#0099ff')
-        .setTitle('CHANGELOG - Tournament System finished & Security Checks')
+        .setTitle('CHANGELOG - Aura Give command')
         .setDescription(
-            "The tournament system is now fully functional and can be used to create and manage tournaments directly from Discord.\n\n" +
-            "Day 2 and asymmetrical top cut are part of the new features.\n\n" +
-            "Organization commands for tournaments and ELO tracking are now restricted to server organizers (set with /setorganizer by an admin of the server).\n\n" +  
-            "Registering a Showdown username will link it to your Discord account in order to make other users unable to unregister your username.\n\n" +
-            "An elo update based on the showdown username evolution will be considered for future updates.\n\n"
+            "Aura Give is here! You can now give aura to other users with the `/auragive` command.\n\n" +
+            "Keep in mind that giving aura has a 20% commission fee, which goes to the giver.\n" +
+            "Receiving aura resets your combo multiplier to 1x, while giving aura increases your combo multiplier by 0.2x.\n" +
+            "This would be useful for future clutch commands or tournament rewards where combo multiplier matters.\n" +
+            "Also, users can only receive aura once per day, so choose wisely!\n\n"
         )
         .setTimestamp();
 
