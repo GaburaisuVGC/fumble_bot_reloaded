@@ -31,6 +31,7 @@ export async function execute(interaction) {
 
         // Send the embed with tournament details and pairings
         await interaction.editReply({ embeds: [result.embed] });
+        console.log(`Tournament started on server ${interaction.guild.id}`);
     } catch (error) {
         console.error(`Error starting tournament:`, error);
         if (!interaction.replied && !interaction.deferred) {

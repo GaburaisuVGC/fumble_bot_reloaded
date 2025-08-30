@@ -65,6 +65,9 @@ export async function execute(interaction) {
         await interaction.guild.channels.cache.get(interaction.channelId).send({ embeds: [embed] });
         // delete the reply
         await interaction.deleteReply();
+
+        console.log(`A match was reported in tournament ${tournamentIdInput} on server ${interaction.guildId}`);
+        
     } catch (error) {
         console.error(`Error reporting match:`, error);
         await interaction.editReply({ 

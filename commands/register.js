@@ -45,7 +45,7 @@ export const data = new SlashCommandBuilder()
     .setName('register')
     .setDescription('Register your Showdown username for daily tracking.')
     .addStringOption(option => option.setName('username')
-        .setDescription('Your Showdown username (case-sensitive).')
+        .setDescription('Your Showdown username')
         .setRequired(true));
 export async function execute(interaction) {
     const username = interaction.options.getString('username');
@@ -55,6 +55,9 @@ export async function execute(interaction) {
         // Check if the server exists in the database
         let server = await Server.findOne({ discordId: guildId });
 
+        // trim the username (only alphanumeric characters, no spaces, dots, underscores or any other special characters, every character will be undercase)
+        const trimmedUsername = username.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
         if (!server) {
             // If the server does not exist, create it
             server = new Server({
@@ -63,22 +66,22 @@ export async function execute(interaction) {
             });
 
             // Add the user to registeredUsers with their information
-            const userData = await getUserData(username);
+            const userData = await getUserData(trimmedUsername);
 
             if (!userData) {
                 throw new Error('User information could not be retrieved. You probably have not played in gen9vgc2025reghbo3.');
             }
 
-            server.registeredUsers.push({ username, elo: userData.elo, gxe: parseFloat(userData.gxe), discordId: interaction.user.id });
+            server.registeredUsers.push({ trimmedUsername, elo: userData.elo, gxe: parseFloat(userData.gxe), discordId: interaction.user.id });
         } else {
             // If the server exists, check if the user is already registered
-            const userIndex = server.registeredUsers.findIndex(user => user.username === username);
+            const userIndex = server.registeredUsers.findIndex(user => user.username.toLowerCase() === trimmedUsername);
             if (userIndex === -1) {
-                const userData = await getUserData(username);
+                const userData = await getUserData(trimmedUsername);
                 if (!userData) {
                     throw new Error('User information could not be retrieved. You probably have not played in gen9vgc2025reghbo3.');
                 }
-                server.registeredUsers.push({ username, elo: userData.elo, gxe: parseFloat(userData.gxe), discordId: interaction.user.id });
+                server.registeredUsers.push({ trimmedUsername, elo: userData.elo, gxe: parseFloat(userData.gxe), discordId: interaction.user.id });
             } else {
                 // User is already registered
                 await interaction.reply(`Username **${username}** is already registered for this server.`);
@@ -90,14 +93,14 @@ export async function execute(interaction) {
         await server.save();
 
         // Fetch user data to display in the confirmation embed
-        const userData = await getUserData(username);
+        const userData = await getUserData(trimmedUsername);
         if (!userData) {
             throw new Error('User information could not be retrieved. You probably have not played in gen9vgc2025reghbo3.');
         }
         const embed = new EmbedBuilder()
             .setColor('#0099ff')
             .setTitle('Showdown Registration Successful')
-            .setDescription(`Username **${username}** has been registered successfully.`)
+            .setDescription(`Username **${trimmedUsername}** has been registered successfully.`)
             .addFields(
                 { name: 'Username', value: userData.pseudo, inline: true },
                 { name: 'Elo', value: userData.elo, inline: true },
@@ -105,10 +108,9 @@ export async function execute(interaction) {
             );
 
         await interaction.reply({ embeds: [embed] });
+        console.log(`User registered on server ${guildId}`);
     } catch (error) {
-        let server = await Server.findOne({ discordId: guildId });
         console.error('Error during registration:', error);
-        console.log("server", server);
         await interaction.reply('There was an error during registration. It might be because Pokémon Showdown user data fetch is unavailable for the moment, or the username is already registered or user information could not be retrieved. You probably have not played in gen9vgc2025reghbo3.');
         }
 }

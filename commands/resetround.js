@@ -56,6 +56,8 @@ export async function execute(interaction) {
 
         await interaction.editReply(`Successfully reset ${result.matchesResetCount} reported match(es) for round ${tournament.currentRound} of tournament ${tournament.tournamentId}. You can now re-report these matches.`);
 
+        console.log(`Reset ${result.matchesResetCount} match results for tournament ${tournamentId} on server ${interaction.guildId}`);
+
     } catch (error) {
         console.error(`Error resetting round results for tournament ${tournamentId}:`, error);
         await interaction.editReply({ 

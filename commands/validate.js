@@ -420,6 +420,8 @@ export async function execute(interaction) {
             }
         }
 
+        console.log(`Successfully validated round ${validatedRoundNumber} for tournament ${tournament.tournamentId}.`);
+
     } catch (error) {
         await session.abortTransaction();
         console.error(`Error validating round for tournament ${tournamentIdInput}:`, error);

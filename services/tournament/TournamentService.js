@@ -1684,28 +1684,22 @@ export default class TournamentService extends ITournamentService {
       userFilter = {
         discordId: { $in: specificUserIds },
       };
-      console.log(
-        `Fetching specific users for post-tournament leaderboard: ${specificUserIds.join(
-          ", "
-        )} for server ${serverId}`
-      );
+
     } else if (serverId) {
       // Case 2: General /tourleaderboard command for a specific server.
       // Users must have played on this server AND meet base activity criteria.
       userFilter = {
         $and: [baseActivityFilter, { playedOnServers: serverId }],
       };
-      console.log(
-        `Fetching general leaderboard for server ${serverId} using User.playedOnServers and base activity.`
-      );
+
     } else {
       // Case 3: Global leaderboard (serverId is null, specificUserIds is null).
       // Users must meet base activity criteria.
       userFilter = baseActivityFilter;
-      console.log(`Fetching global leaderboard with base activity filter.`);
+
     }
 
-    let users = await User.find(userFilter).limit(100);
+    let users = await User.find(userFilter);
 
     // Add new stats to the leaderboard display if desired. For now, keeping existing fields.
     // The sorting logic below already uses tournamentWins and auraDelta.
@@ -1797,6 +1791,8 @@ export default class TournamentService extends ITournamentService {
             b.totalWins - a.totalWins
         );
     }
+    // limit to top 100
+    users = users.slice(0, 100);
     return users;
   }
 
@@ -1914,11 +1910,6 @@ export default class TournamentService extends ITournamentService {
     sort = "wins",
     specificUserIds = null
   ) {
-    console.log(
-      `Attempting to display leaderboard for server ${serverId} in channel ${channelId} with specificUserIds: ${
-        specificUserIds ? specificUserIds.join(", ") : "null"
-      }`
-    );
     const channel = await client.channels.cache.get(channelId);
     if (!channel) {
       console.error(

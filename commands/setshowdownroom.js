@@ -51,6 +51,8 @@ export async function execute(interaction) {
             .setDescription(`The channel **${channel.name}** has been set for automatic Showdown messages.`);
 
         await interaction.reply({ embeds: [embed] });
+
+        console.log(`Showdown room set on server ${guildId}`);
     } catch (error) {
         console.error('Error setting showdown room:', error);
         await interaction.reply({

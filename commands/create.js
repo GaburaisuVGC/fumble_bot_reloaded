@@ -186,6 +186,7 @@ export async function execute(interaction) {
 
     // Send the reply to the channel where the command was used
     await interaction.followUp({ embeds: [embed], ephemeral: false });
+    console.log(`Tournament created on server ${serverId}`);
   } catch (error) {
     console.error("Error creating tournament:", error);
     await interaction.editReply({

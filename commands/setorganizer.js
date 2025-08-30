@@ -35,6 +35,8 @@ export async function execute(interaction) {
             .setDescription(`${targetUser.username} has been added as a tournament organizer.`);
 
         await interaction.reply({ embeds: [embed] });
+
+        console.log(`New user set as organizer on server ${guildId}`);
     } catch (error) {
         console.error('Error setting organizer:', error);
         await interaction.reply({

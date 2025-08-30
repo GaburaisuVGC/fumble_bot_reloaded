@@ -74,6 +74,8 @@ export async function execute(interaction) {
 
         await interaction.editReply({ embeds: [embed] });
 
+        console.log(`A used joined a tournament on server ${interaction.guildId}`);
+
     } catch (error) {
         console.error(`Error joining tournament ${tournamentIdInput} for user ${targetUserId || organizerExecutingId}:`, error);
         if (!interaction.replied && !interaction.deferred) {
