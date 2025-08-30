@@ -72,7 +72,7 @@ export async function execute(interaction) {
                 throw new Error('User information could not be retrieved. You probably have not played in gen9vgc2025reghbo3.');
             }
 
-            server.registeredUsers.push({ trimmedUsername, elo: userData.elo, gxe: parseFloat(userData.gxe), discordId: interaction.user.id });
+            server.registeredUsers.push({ username: trimmedUsername, elo: userData.elo, gxe: parseFloat(userData.gxe), discordId: interaction.user.id });
         } else {
             // If the server exists, check if the user is already registered
             const userIndex = server.registeredUsers.findIndex(user => user.username.toLowerCase() === trimmedUsername);
@@ -81,7 +81,7 @@ export async function execute(interaction) {
                 if (!userData) {
                     throw new Error('User information could not be retrieved. You probably have not played in gen9vgc2025reghbo3.');
                 }
-                server.registeredUsers.push({ trimmedUsername, elo: userData.elo, gxe: parseFloat(userData.gxe), discordId: interaction.user.id });
+                server.registeredUsers.push({ username: trimmedUsername, elo: userData.elo, gxe: parseFloat(userData.gxe), discordId: interaction.user.id });
             } else {
                 // User is already registered
                 await interaction.reply(`Username **${username}** is already registered for this server.`);
