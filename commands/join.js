@@ -38,6 +38,11 @@ export async function execute(interaction) {
             targetUserTag = interaction.user.tag;
         }
 
+        // if the target user is a bot, reject with a reply
+        if (specifiedUser && specifiedUser.bot) {
+            return interaction.editReply({ content: 'You cannot join a bot to a tournament.' });
+        }
+
         // Join the tournament using the service
         const result = await tournamentService.joinTournament(
             tournamentIdInput,

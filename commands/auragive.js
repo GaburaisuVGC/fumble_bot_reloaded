@@ -23,6 +23,10 @@ export async function execute(interaction) {
         return interaction.reply({ content: 'You cannot give aura to yourself.', ephemeral: true });
     }
 
+    if (receiverUser.bot) {
+        return interaction.reply({ content: 'Bots cannot receive aura.', ephemeral: true });
+    }
+
     if (auraAmount <= 0) {
         return interaction.reply({ content: 'You must give a positive amount of aura.', ephemeral: true });
     }

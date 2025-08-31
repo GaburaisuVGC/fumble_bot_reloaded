@@ -2,6 +2,8 @@ import { Client, Collection, Events, EmbedBuilder } from 'discord.js';
 import connectToDatabase from './database.js';
 import { readdirSync } from 'fs';
 import Tournament from './models/Tournament.js';
+import PlayerStats from './models/PlayerStats.js';
+import Match from './models/Match.js';
 import User from './models/User.js';
 import { schedule } from 'node-cron';
 import { config } from 'dotenv';
@@ -52,10 +54,21 @@ client.once(Events.ClientReady, async (c) => {
             await Tournament.updateMany({}, { $inc: { daysAlive: 1 } });
             console.log('Incremented daysAlive for all tournaments.');
 
-            // Delete tournaments older than 30 days
-            const deletionResult = await Tournament.deleteMany({ daysAlive: { $gte: 30 } });
-            if (deletionResult.deletedCount > 0) {
-                console.log(`Deleted ${deletionResult.deletedCount} old tournaments.`);
+            // Find tournaments to delete
+            const oldTournaments = await Tournament.find({ daysAlive: { $gte: 30 } });
+
+            if (oldTournaments.length > 0) {
+                const tournamentIds = oldTournaments.map(t => t._id);
+
+                // Delete associated player stats and matches
+                await PlayerStats.deleteMany({ tournament: { $in: tournamentIds } });
+                await Match.deleteMany({ tournament: { $in: tournamentIds } });
+
+                // Delete the tournaments
+                const deletionResult = await Tournament.deleteMany({ _id: { $in: tournamentIds } });
+                if (deletionResult.deletedCount > 0) {
+                    console.log(`Deleted ${deletionResult.deletedCount} old tournaments and their associated data.`);
+                }
             }
 
             // Reset canReceiveAura for all users
