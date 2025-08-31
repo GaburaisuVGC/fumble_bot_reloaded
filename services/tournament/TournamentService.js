@@ -192,9 +192,6 @@ export default class TournamentService extends ITournamentService {
         );
       }
 
-      // Ensure the executing user exists (for logging/consistency)
-      await this.userService.findOrCreateUser(executingUserId, null, session);
-
       // Check if user is already in the tournament
       if (tournament.participants.some((p) => p.userId === userId)) {
         throw new Error(`User ${discordTag} is already in the tournament.`);
