@@ -16,6 +16,9 @@ export async function execute(interaction) {
     const tournamentId = interaction.options.getString('tournamentid').toUpperCase();
     const organizerId = interaction.user.id;
 
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     // Initialize services
     const userService = new UserService();
     const tournamentService = new TournamentService(userService);
@@ -45,23 +48,72 @@ export async function execute(interaction) {
             return;
         }
 
-        // Reset the current round using the service
-        const result = await tournamentService.resetRound(tournamentId, tournament.currentRound);
-        
-        // Check if any matches were reset
-        if (result.matchesResetCount === 0) {
+        const matchesToReset = await Match.find({
+            tournament: tournament._id,
+            roundNumber: tournament.currentRound,
+            reported: true // Only find matches that were actually reported
+        }).session(session);
+
+        if (matchesToReset.length === 0) {
             await interaction.editReply(`No reported matches found for the current round (${tournament.currentRound}) of tournament ${tournament.tournamentId}. Nothing to reset.`);
+            await session.abortTransaction();
+            session.endSession();
             return;
         }
 
-        await interaction.editReply(`Successfully reset ${result.matchesResetCount} reported match(es) for round ${tournament.currentRound} of tournament ${tournament.tournamentId}. You can now re-report these matches.`);
+        let matchesResetCount = 0;
+        for (const match of matchesToReset) {
+            // Revert PlayerStats for player1 if data exists
+            if (match.player1 && match.player1.userId && match.player1StatsBeforeReport) {
+                const p1Stat = await PlayerStats.findOne({ tournament: tournament._id, userId: match.player1.userId }).session(session);
+                if (p1Stat) {
+                    p1Stat.wins = match.player1StatsBeforeReport.wins;
+                    p1Stat.losses = match.player1StatsBeforeReport.losses;
+                    p1Stat.draws = match.player1StatsBeforeReport.draws;
+                    p1Stat.score = match.player1StatsBeforeReport.score;
+                    await p1Stat.save({ session });
+                }
+            }
 
-        console.log(`Reset ${result.matchesResetCount} match results for tournament ${tournamentId} on server ${interaction.guildId}`);
+            // Revert PlayerStats for player2 if data exists
+            if (match.player2 && match.player2.userId && match.player2StatsBeforeReport) {
+                const p2Stat = await PlayerStats.findOne({ tournament: tournament._id, userId: match.player2.userId }).session(session);
+                if (p2Stat) {
+                    p2Stat.wins = match.player2StatsBeforeReport.wins;
+                    p2Stat.losses = match.player2StatsBeforeReport.losses;
+                    p2Stat.draws = match.player2StatsBeforeReport.draws;
+                    p2Stat.score = match.player2StatsBeforeReport.score;
+                    await p2Stat.save({ session });
+                }
+            }
+
+            // Reset match fields
+            match.reported = false;
+            match.winnerId = null;
+            match.isDraw = false;
+            match.player1StatsBeforeReport = undefined; // Clear the stored previous stats
+            match.player2StatsBeforeReport = undefined;
+            await match.save({ session });
+            matchesResetCount++;
+        }
+
+        await session.commitTransaction();
+
+        // Check if any matches were reset
+        if (matchesResetCount === 0) {
+            await interaction.editReply(`No reported matches found for the current round (${tournament.currentRound}) of tournament ${tournament.tournamentId}. Nothing to reset.`);
+            return;
+        }
+        await interaction.editReply(`Successfully reset ${matchesResetCount} reported match(es) for round ${tournament.currentRound} of tournament ${tournament.tournamentId}. You can now re-report these matches.`);
+
+        console.log(`Reset ${matchesResetCount} match results for tournament ${tournamentId} on server ${interaction.guildId}`);
 
     } catch (error) {
         console.error(`Error resetting round results for tournament ${tournamentId}:`, error);
         await interaction.editReply({ 
             content: `Error: ${error.message || 'There was an error resetting the round results. Please try again later.'}` 
         });
+    } finally {
+        session.endSession();
     }
 }
