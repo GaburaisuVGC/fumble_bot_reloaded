@@ -1,14 +1,14 @@
 import { SlashCommandBuilder, EmbedBuilder } from "discord.js";
 import axios from "axios";
-import cheerio from "cheerio";
+import { load }from "cheerio";
 
-async function getUserData(username, format = "gen9vgc2025reghbo3") {
+async function getUserData(username, format = "gen9vgc2026regfbo3") {
   try {
     const response = await axios.get(
       `https://pokemonshowdown.com/users/${username}`
     );
     const html = response.data;
-    const $ = cheerio.load(html);
+    const $ = load(html);
 
     // Look for the table row that matches the specified format
     const tables = $("table");
@@ -53,13 +53,13 @@ export const data = new SlashCommandBuilder()
   .addStringOption((option) =>
     option
       .setName("format")
-      .setDescription("The format to look up (default: gen9vgc2025reghbo3).")
+      .setDescription("The format to look up (default: gen9vgc2026regfbo3).")
       .setRequired(false)
   );
 export async function execute(interaction) {
   const username = interaction.options.getString("username");
   const format =
-    interaction.options.getString("format") || "gen9vgc2025reghbo3";
+    interaction.options.getString("format") || "gen9vgc2026regfbo3";
 
   // trim the username (only alphanumeric characters, no spaces, dots, underscores or any other special characters, every character will be undercase)
   const trimmedUsername = username.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();

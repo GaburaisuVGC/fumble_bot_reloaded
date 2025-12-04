@@ -1,13 +1,13 @@
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import axios from 'axios';
-import cheerio from 'cheerio';
+import { load } from 'cheerio';
 import Server from '../models/Server.js';
 
 async function getUserData(username) {
     try {
         const response = await axios.get(`https://pokemonshowdown.com/users/${username}`);
         const html = response.data;
-        const $ = cheerio.load(html);
+        const $ = load(html);
 
         // Extract the username (pseudo)
         const pseudo = $('h1').text().trim();
@@ -20,14 +20,14 @@ async function getUserData(username) {
             const rows = $(table).find('tr');
             rows.each((i, row) => {
                 const cells = $(row).find('td');
-                if (cells.length > 0 && $(cells[0]).text().includes('gen9vgc2025reghbo3')) {
+                if (cells.length > 0 && $(cells[0]).text().includes('gen9vgc2026regfbo3')) {
                     formatStats = cells;
                 }
             });
         });
 
         if (!formatStats) {
-            console.log('Format gen9vgc2025reghbo3 not found for this user.');
+            console.log('Format gen9vgc2026regfbo3 not found for this user.');
             return;
         }
 
@@ -69,7 +69,7 @@ export async function execute(interaction) {
             const userData = await getUserData(trimmedUsername);
 
             if (!userData) {
-                throw new Error('User information could not be retrieved. You probably have not played in gen9vgc2025reghbo3.');
+                throw new Error('User information could not be retrieved. You probably have not played in gen9vgc2026regfbo3.');
             }
 
             server.registeredUsers.push({ username: trimmedUsername, elo: userData.elo, gxe: parseFloat(userData.gxe), discordId: interaction.user.id });
@@ -79,7 +79,7 @@ export async function execute(interaction) {
             if (userIndex === -1) {
                 const userData = await getUserData(trimmedUsername);
                 if (!userData) {
-                    throw new Error('User information could not be retrieved. You probably have not played in gen9vgc2025reghbo3.');
+                    throw new Error('User information could not be retrieved. You probably have not played in gen9vgc2026regfbo3.');
                 }
                 server.registeredUsers.push({ username: trimmedUsername, elo: userData.elo, gxe: parseFloat(userData.gxe), discordId: interaction.user.id });
             } else {
@@ -95,7 +95,7 @@ export async function execute(interaction) {
         // Fetch user data to display in the confirmation embed
         const userData = await getUserData(trimmedUsername);
         if (!userData) {
-            throw new Error('User information could not be retrieved. You probably have not played in gen9vgc2025reghbo3.');
+            throw new Error('User information could not be retrieved. You probably have not played in gen9vgc2026regfbo3.');
         }
         const embed = new EmbedBuilder()
             .setColor('#0099ff')
@@ -111,6 +111,6 @@ export async function execute(interaction) {
         console.log(`User registered on server ${guildId}`);
     } catch (error) {
         console.error('Error during registration:', error);
-        await interaction.reply('There was an error during registration. It might be because Pokémon Showdown user data fetch is unavailable for the moment, or the username is already registered or user information could not be retrieved. You probably have not played in gen9vgc2025reghbo3.');
+        await interaction.reply('There was an error during registration. It might be because Pokémon Showdown user data fetch is unavailable for the moment, or the username is already registered or user information could not be retrieved. You probably have not played in gen9vgc2026regfbo3.');
         }
 }

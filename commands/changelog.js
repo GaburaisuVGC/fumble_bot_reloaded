@@ -17,25 +17,25 @@ export async function execute(interaction) {
     }
 
     // Create the changelog embed
-    // const infoEmbed = new EmbedBuilder()
-    //     .setColor('#0099ff')
-    //     .setTitle('Changelog - Format update')
-    //     .setDescription(
-    //         "The new default format is **Reg I Bo3 (VGC 2025)**.\n\n" +
-    //         "Please **register your Showdown username again** to get daily tracking."
-    //     )
-    //     .setTimestamp();
     const infoEmbed = new EmbedBuilder()
         .setColor('#0099ff')
-        .setTitle('CHANGELOG - Aura Give command')
+        .setTitle('Changelog - Format update')
         .setDescription(
-            "Aura Give is here! You can now give aura to other users with the `/auragive` command.\n\n" +
-            "Keep in mind that giving aura has a 20% commission fee, which goes to the giver.\n" +
-            "Receiving aura resets your combo multiplier to 1x, while giving aura increases your combo multiplier by 0.2x.\n" +
-            "This would be useful for future clutch commands or tournament rewards where combo multiplier matters.\n" +
-            "Also, users can only receive aura once per day, so choose wisely!\n\n"
+            "The new default format is **Reg F Bo3 (VGC 2026)**.\n\n" +
+            "Please **remove then register your Showdown username again** to get daily tracking."
         )
         .setTimestamp();
+    // const infoEmbed = new EmbedBuilder()
+    //     .setColor('#0099ff')
+    //     .setTitle('CHANGELOG - Aura Give command')
+    //     .setDescription(
+    //         "Aura Give is here! You can now give aura to other users with the `/auragive` command.\n\n" +
+    //         "Keep in mind that giving aura has a 20% commission fee, which goes to the giver.\n" +
+    //         "Receiving aura resets your combo multiplier to 1x, while giving aura increases your combo multiplier by 0.2x.\n" +
+    //         "This would be useful for future clutch commands or tournament rewards where combo multiplier matters.\n" +
+    //         "Also, users can only receive aura once per day, so choose wisely!\n\n"
+    //     )
+    //     .setTimestamp();
 
     // Send the changelog to all servers' showdownRoom
     const guilds = interaction.client.guilds.cache;

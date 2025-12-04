@@ -11,7 +11,7 @@ With Fumble Bot, you can **track your ELO ratings** and **organize tournaments**
 ### Pokémon Showdown ELO Tracking
 - Track your (or others) **ladder progress** every day (07:00 AM UTC+2).
 - Compare your ELO with other members of your server.
-- Only for players having enough games (GXE available) in the gen9vgc2025reghbo3 format.
+- Only for players having enough games (GXE available) in the gen9vgc2026regfbo3 format.
 
 ### Tournament Organization
 - Easily **create and manage tournaments**.

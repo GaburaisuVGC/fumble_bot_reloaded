@@ -8,5 +8,5 @@ export default {
     BATCH_SIZE: 3,               // Maximum number of simultaneous requests
     TIMEOUT: 10000,              // Request timeout (ms)
     MAX_RETRY_DELAY: 30000,      // Maximum delay between retries (ms)
-    FORMAT: 'gen9vgc2025reghbo3' // Pokemon Showdown format to track
+    FORMAT: 'gen9vgc2026regfbo3' // Pokemon Showdown format to track
 };

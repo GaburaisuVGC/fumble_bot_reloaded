@@ -1,6 +1,10 @@
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import TournamentService from '../services/tournament/TournamentService.js';
 import UserService from '../services/user/UserService.js';
+import mongoose from 'mongoose';
+import Tournament from '../models/Tournament.js';
+import Match from '../models/Match.js';
+import PlayerStats from '../models/PlayerStats.js';
 
 export const data = new SlashCommandBuilder()
     .setName('resetround')
@@ -51,7 +55,8 @@ export async function execute(interaction) {
         const matchesToReset = await Match.find({
             tournament: tournament._id,
             roundNumber: tournament.currentRound,
-            reported: true // Only find matches that were actually reported
+            reported: true,
+            player2: { $ne: null }
         }).session(session);
 
         if (matchesToReset.length === 0) {
